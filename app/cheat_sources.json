@@ -1,0 +1,26 @@
+[
+  {
+    "id": "eab-cheats",
+    "name": "English Amiga Board",
+    "enabled": true,
+    "queryTemplate": "https://www.google.com/search?q=site%3Aeab.abime.net+{query}+trainer"
+  },
+  {
+    "id": "hol-cheats",
+    "name": "Hall of Light",
+    "enabled": true,
+    "queryTemplate": "https://www.google.com/search?q=site%3Ahol.abime.net+{query}"
+  },
+  {
+    "id": "lemon-cheats",
+    "name": "Lemon Amiga",
+    "enabled": true,
+    "queryTemplate": "https://www.google.com/search?q=site%3Alemonamiga.com+{query}+cheat"
+  },
+  {
+    "id": "whdload-cheats",
+    "name": "WHDLoad installer notes",
+    "enabled": true,
+    "queryTemplate": "https://www.google.com/search?q=site%3Awhdload.de+{query}"
+  }
+]

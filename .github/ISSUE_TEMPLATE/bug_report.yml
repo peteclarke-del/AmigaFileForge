@@ -1,0 +1,70 @@
+name: Bug report
+description: Report reproducible behaviour that differs from the documented contract
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach copyrighted media, private images or secrets. Security defects must be reported privately through SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Use the version shown by the application or the exact Git commit.
+    validations:
+      required: true
+  - type: dropdown
+    id: edition
+    attributes:
+      label: Edition
+      options:
+        - Docker web application
+        - Native Linux application
+        - Headless CLI
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host and architecture
+      placeholder: Raspberry Pi OS 64-bit on ARM64, Docker 27
+    validations:
+      required: true
+  - type: input
+    id: media
+    attributes:
+      label: Media and target profile
+      description: Include format, geometry where known, and selected hardware profile.
+      placeholder: Hardfile HDA and GEO, Master Hardfile profile
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: Give the smallest exact sequence and describe any generated fixture.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result and logs
+      description: Remove session tokens, personal paths, private metadata and copyrighted media.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and current documentation.
+          required: true
+        - label: This report contains no secrets or media I lack permission to share.
+          required: true
+        - label: This is not a privately reportable security vulnerability.
+          required: true

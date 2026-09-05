@@ -1,0 +1,277 @@
+/*
+ * Amiga File Forge theme
+ *
+ * This file owns the complete application palette. Component layout, spacing
+ * and typography live in styles.css. To create another visual theme, change
+ * these semantic tokens and the two small theme-specific sections below.
+ *
+ * Light mode follows Workbench 2.0/3.1: the grey chassis and window furniture
+ * of an A1200 desktop, lifted by Commodore blue and the Workbench orange used
+ * for selection and alerts. Dark mode follows Workbench 1.3: the deep
+ * #0055AA blue screen with white text and the same orange highlight.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Workbench 2.0/3.1 chassis, window furniture and Commodore accents */
+  --ink: #14161c;
+  --muted: #5a6070;
+  --paper: #f2f3f6;
+  --cream: #c9ccd4;
+  --surface: #dcdee4;
+  --yellow: #f5a300;
+  --orange: #b34c00;
+  --teal: #1a7a86;
+  --blue: #2c5fb5;
+  --line: #70768a;
+  --shadow: 0 18px 50px rgba(12, 20, 44, .24);
+
+  --body-background:
+    radial-gradient(circle at 82% 4%, rgba(44, 95, 181, .18), transparent 28rem),
+    linear-gradient(180deg, #9ea3b2 0, #c6cad5 28%, #eceef3 100%);
+  --html-background: #9ea3b2;
+  --pane-background: rgba(242, 243, 246, .95);
+  --toolbar-background: #e3e5ec;
+  --header-background: #c9ccd4;
+  --footer-background: #e7e9ef;
+  --button-background: #eef0f5;
+  --input-background: #ffffff;
+  --input-border: #767c8d;
+  --topbar-border: rgba(20, 22, 28, .3);
+  --brand-shadow: rgba(20, 22, 28, .3);
+  --menu-shadow: rgba(16, 22, 40, .28);
+  --modal-shadow: rgba(12, 18, 34, .4);
+  --modal-backdrop: rgba(16, 22, 40, .56);
+  --overlay-backdrop: rgba(8, 12, 24, .78);
+  --loading-background: rgba(242, 243, 246, .84);
+  --emulator-background: #06131f;
+  --inset-shadow: rgba(0, 0, 0, .16);
+
+  --danger: #b32218;
+  --danger-border: #d1483a;
+  --danger-soft: #eab3ad;
+  --danger-surface: #f6d5d0;
+  --warning: #8a5000;
+  --warning-border: #c07408;
+  --success: #1a7a4e;
+  --capacity-good: #1f7c50;
+  --capacity-warning: #c07408;
+  --capacity-critical: #b32218;
+  --on-accent: #ffffff;
+  --on-warning: #ffffff;
+  --on-yellow: #14161c;
+  --focus-ring: #0055aa;
+
+  --row-border: #c6cad5;
+  --row-hover: #e2e6f0;
+  --row-selected: #ffa64d;
+  --table-heading: #d5d8e0;
+  --table-heading-text: #5a6070;
+  --empty-text: #6d7284;
+  --empty-icon: #cbcfda;
+  --empty-icon-text: #6d7284;
+  --pill-border: #a7acbb;
+  --progress-track: #b6bbc9;
+
+  /* Commodore rainbow, used to keep media and content kinds distinguishable */
+  --file-icon-background: #cfe0f4;
+  --file-icon-text: #22508f;
+  --folder-icon-background: #ffd98a;
+  --folder-icon-text: #7a4a00;
+  --disk-icon-background: #f6c6bd;
+  --disk-icon-text: #a12b1e;
+  --basic-icon-background: #cfe9cf;
+  --basic-icon-text: #24693a;
+  --script-icon-background: #cfe4ef;
+  --script-icon-text: #14607a;
+  --text-icon-background: #ded9ec;
+  --text-icon-text: #4d3d7f;
+  --binary-icon-background: #e0d4ec;
+  --binary-icon-text: #6a3f96;
+  --ffs-format: #2c5fb5;
+  --dms-format: #7c4a9e;
+  --format-icon-text: #14161c;
+  --hdf-format-text: #ffffff;
+  --ffs-format-text: #ffffff;
+  --dms-format-text: #ffffff;
+  --rom-format-text: #ffffff;
+  --format-icon-border: #1b2133;
+  --format-icon-shadow: #1b2133;
+
+  /* Authentic preview colours are content tokens, kept here with the UI palette. */
+  --preview-bezel: #1b2028;
+  --preview-case: #cdc9bd;
+  --preview-rim: #0a0c10;
+  --preview-shadow: rgba(0, 0, 0, .24);
+  --preview-screen: #0055aa;
+  --preview-cyan: #ffffff;
+  --preview-green: #ff8800;
+  --preview-controls: #e9ecf2;
+  --preview-glow: rgba(0, 85, 170, .12);
+
+  /* The hex grid deliberately resembles a Workbench 1.3 screen, not paper. */
+  --hex-background: #06264a;
+  --hex-panel: #0b3568;
+  --hex-border: #2a63a8;
+  --hex-text: #ffffff;
+  --hex-muted: #9dbde4;
+  --hex-address: #ff9c33;
+  --hex-hover: #124580;
+  --hex-selected: #0055aa;
+  --hex-changed: #ff8800;
+  --hex-active: #1a7a86;
+  --hex-active-changed: #b35c00;
+  --hex-scrollbar: #2f6bb0;
+  --hex-loading: rgba(6, 38, 74, .84);
+  --syntax-keyword: #ffa94d;
+  --syntax-string: #8fd6a3;
+  --syntax-number: #9dc9ff;
+  --syntax-comment: #90a8c8;
+  --syntax-symbol: #d5aeef;
+  --syntax-api: #ffd166;
+  --syntax-selection: rgba(0, 85, 170, .6);
+  --diagnostic-error: #ff9d8f;
+  --diagnostic-warning: #ffc65c;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Workbench 1.3: #0055AA screen, white text, orange highlight */
+  --ink: #f0f4fb;
+  --muted: #9fb6d6;
+  --paper: #08213f;
+  --cream: #0d3062;
+  --surface: #0b2a52;
+  --yellow: #ffb43d;
+  --orange: #ff8800;
+  --teal: #46c2cf;
+  --blue: #63a4ee;
+  --line: #5b8ac6;
+  --shadow: 0 18px 50px rgba(0, 0, 0, .5);
+
+  --body-background:
+    radial-gradient(circle at 82% 2%, rgba(255, 136, 0, .14), transparent 30rem),
+    linear-gradient(180deg, #062244, #041224);
+  --html-background: #041224;
+  --pane-background: rgba(8, 33, 63, .97);
+  --toolbar-background: #0a2949;
+  --header-background: #0d3062;
+  --footer-background: #0a2949;
+  --button-background: #103361;
+  --input-background: #0a2648;
+  --input-border: #5b8ac6;
+  --topbar-border: rgba(240, 244, 251, .18);
+  --brand-shadow: rgba(0, 0, 0, .6);
+  --menu-shadow: rgba(0, 0, 0, .55);
+  --modal-shadow: rgba(0, 0, 0, .6);
+  --modal-backdrop: rgba(0, 8, 20, .76);
+  --overlay-backdrop: rgba(0, 6, 16, .84);
+  --loading-background: rgba(6, 26, 50, .84);
+  --emulator-background: #02080f;
+  --inset-shadow: rgba(0, 0, 0, .34);
+
+  --danger: #ff9a86;
+  --danger-border: #cf5a44;
+  --danger-soft: #7a3529;
+  --danger-surface: #40201a;
+  --warning: #ffc65c;
+  --warning-border: #c98a1e;
+  --success: #6fd8a3;
+  --capacity-good: #6fd8a3;
+  --capacity-warning: #ffb43d;
+  --capacity-critical: #ff9a86;
+  --on-accent: #04101f;
+  --on-warning: #04101f;
+  --on-yellow: #04101f;
+  --focus-ring: #ff9c33;
+
+  --row-border: #1b4478;
+  --row-hover: #12386a;
+  --row-selected: #8a4a06;
+  --table-heading: #0b2a52;
+  --table-heading-text: #9fb6d6;
+  --empty-text: #8ba5c8;
+  --empty-icon: #103361;
+  --empty-icon-text: #8ba5c8;
+  --pill-border: #2f5f9c;
+  --progress-track: #123a6c;
+
+  --file-icon-background: #123a6c;
+  --file-icon-text: #9dc9ff;
+  --folder-icon-background: #5b3c05;
+  --folder-icon-text: #ffcb70;
+  --disk-icon-background: #5c241b;
+  --disk-icon-text: #ffa593;
+  --basic-icon-background: #1a4a30;
+  --basic-icon-text: #8fd6a3;
+  --script-icon-background: #124a58;
+  --script-icon-text: #8ad9e6;
+  --text-icon-background: #2e2a55;
+  --text-icon-text: #bcb2ee;
+  --binary-icon-background: #3a2a52;
+  --binary-icon-text: #d5aeef;
+  --ffs-format: #3f7ed0;
+  --dms-format: #9160b8;
+  --format-icon-text: #04101f;
+  --hdf-format-text: #04101f;
+  --ffs-format-text: #04101f;
+  --dms-format-text: #ffffff;
+  --rom-format-text: #ffffff;
+  --format-icon-border: #4a7cba;
+  --format-icon-shadow: #02080f;
+
+  --preview-bezel: #10161d;
+  --preview-case: #23282f;
+  --preview-rim: #05070a;
+  --preview-shadow: rgba(0, 0, 0, .3);
+  --preview-screen: #0055aa;
+  --preview-cyan: #ffffff;
+  --preview-green: #ff8800;
+  --preview-controls: #dfe5ee;
+  --preview-glow: rgba(0, 85, 170, .16);
+
+  --hex-background: #03162c;
+  --hex-panel: #072744;
+  --hex-border: #22558f;
+  --hex-text: #f0f4fb;
+  --hex-muted: #93b2d8;
+  --hex-address: #ffa64d;
+  --hex-hover: #0e3462;
+  --hex-selected: #0f4d94;
+  --hex-changed: #ff9c33;
+  --hex-active: #1a7a86;
+  --hex-active-changed: #a35400;
+  --hex-scrollbar: #26588f;
+  --hex-loading: rgba(3, 22, 44, .86);
+  --syntax-keyword: #ffb161;
+  --syntax-string: #96dfae;
+  --syntax-number: #a8d2ff;
+  --syntax-comment: #8ba3c2;
+  --syntax-symbol: #dbb6f4;
+  --syntax-api: #ffd980;
+  --syntax-selection: rgba(15, 77, 148, .74);
+  --diagnostic-error: #ffa596;
+  --diagnostic-warning: #ffcf6d;
+}
+
+html { background: var(--html-background); }
+body { background: var(--body-background); }
+.topbar { border-color: var(--topbar-border); }
+.brand-mark { filter: drop-shadow(2px 2px 0 var(--brand-shadow)); }
+.pane { background: var(--pane-background); }
+.pane-head { background: var(--header-background); }
+.toolbar, .breadcrumbs, .file-list th, .pane-foot { background: var(--toolbar-background); }
+.pane-foot { background: var(--footer-background); }
+.button, dialog, dialog form, .field input, .field select { background: var(--button-background); color: var(--ink); }
+.field input, .field select { background: var(--input-background); }
+dialog::backdrop { background: var(--modal-backdrop); }
+.sample { background: var(--footer-background); }
+.loading { background: var(--loading-background); }
+.online-results, .online-search-bar input, .online-search-bar select,
+.online-install-options input, .online-source-row input, .online-source-row textarea,
+.online-new-source input, .online-new-source select, .online-new-source textarea {
+  background: var(--paper);
+  color: var(--ink);
+}

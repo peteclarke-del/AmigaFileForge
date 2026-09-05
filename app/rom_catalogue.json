@@ -1,0 +1,5 @@
+{
+  "format": "amiga-file-forge-rom-catalogue-1",
+  "note": "Shipped empty on purpose. A ROM identity is keyed by the exact SHA-256 of the image, so an entry is only meaningful once someone has hashed a ROM they actually hold. Add your own through Tools > ROM Workbench > Identity; those records are stored per owner and are never published from here.",
+  "roms": []
+}

@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a format-aware workflow or engineering improvement
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Describe the workflow or limitation without assuming an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Formats, machines and editions
+      description: Identify relevant filing systems, target hardware, web, native Linux and CLI behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected outcome
+      description: Include validation, rollback, metadata and failure behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Technical references or fixtures
+      description: Link authoritative documentation. Do not upload copyrighted media.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues, documentation and the product backlog.
+          required: true
+        - label: I have identified any operation that could overwrite media or lose metadata.
+          required: true

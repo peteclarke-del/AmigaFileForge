@@ -1,0 +1,12 @@
+Amiga File Forge
+Copyright (c) 2026 Pete Clarke
+
+The Amiga File Forge source is licensed under the MIT License in LICENSE.
+
+The repository and built application also refer to, build, install or package
+third-party components and firmware. Those materials retain their own
+copyright and licence terms. See THIRD_PARTY_NOTICES.md and firmware/README.md
+before redistributing a source archive, container image or native package.
+
+User-supplied disk, dms, ROM, archive and hard-drive images are not covered by
+the Amiga File Forge licence.

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-amiga-ofs">
+    <comment>Amigan OFS disk image</comment>
+    <glob pattern="*.adf"/><glob pattern="*.adz"/>
+  </mime-type>
+  <mime-type type="application/x-amiga-hdf">
+    <comment>FastFileSystem HDF disk bank</comment>
+    <glob pattern="*.hdf"/>
+  </mime-type>
+  <mime-type type="application/x-amiga-ffs">
+    <comment>Amigan FFS or AmigaDOS image</comment>
+    <glob pattern="*.adf"/><glob pattern="*.adz"/><glob pattern="*.dsk"/>
+    <glob pattern="*.adf"/><glob pattern="*.hda"/><glob pattern="*.geo"/>
+    <glob pattern="*.hda"/><glob pattern="*.hdz"/><glob pattern="*.hd4"/>
+  </mime-type>
+  <mime-type type="application/x-amiga-dms">
+    <comment>Unified Emulator Format DMS archive</comment>
+    <glob pattern="*.dms"/>
+  </mime-type>
+  <mime-type type="application/x-amiga-rom">
+    <comment>Amiga ROM image</comment>
+    <glob pattern="*.rom"/>
+  </mime-type>
+  <mime-type type="application/x-amiga-hfe">
+    <comment>HxC floppy image</comment>
+    <glob pattern="*.hfe"/>
+  </mime-type>
+  <mime-type type="application/x-amiga-scp">
+    <comment>SuperCard Pro flux capture</comment>
+    <glob pattern="*.scp"/>
+  </mime-type>
+</mime-info>

@@ -1,0 +1,40 @@
+# Lint configuration for Amiga File Forge.
+#
+# The enforced rule set is deliberately narrow: rules that catch code which is
+# wrong, not code that is differently styled. A gate that fails on hundreds of
+# pre-existing stylistic findings gets switched off, so this one starts at the
+# correctness core and is green.
+#
+# It earns its place. `F821` (undefined name) caught a real NameError in the
+# FFS menu-test path that unit tests had missed, because the test that covered
+# that function mocked the function itself out.
+#
+# Widening the set is welcome, but do it one rule family at a time with the
+# resulting fixes in the same change, so the gate is never left failing.
+
+line-length = 120
+target-version = "py312"
+
+exclude = [
+    ".venv",
+    "node_modules",
+    "work",
+    "output",
+    "samples",
+]
+
+[lint]
+select = [
+    "F",    # pyflakes: undefined names, unused imports, broken f-strings
+    "E9",   # syntax and IO errors that stop the file being parsed
+    "PLE",  # pylint errors: genuine mistakes, not preferences
+]
+
+[lint.per-file-ignores]
+# Test modules build deliberately odd fixtures to exercise failure paths.
+"tests/*" = ["F811"]
+
+[format]
+# Formatting is not enforced; the codebase has a consistent hand-written style
+# and reformatting it wholesale would bury real changes in noise.
+quote-style = "preserve"

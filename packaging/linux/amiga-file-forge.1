@@ -1,0 +1,54 @@
+.TH AMIGA-FILE-FORGE 1 "August 2026" "Amiga File Forge" "User Commands"
+.SH NAME
+amiga-file-forge \- open and maintain Amiga media images
+.SH SYNOPSIS
+.B amiga-file-forge
+.RI [ image ...]
+.SH DESCRIPTION
+Amiga File Forge is a GTK desktop application for browsing, editing,
+validating and converting Amiga, Amiga 600, Amiga 4000 and AmigaOS disk,
+dms, ROM and hard-drive images.
+.PP
+Files named on the command line are opened through the same private-copy and
+format-validation path as the GTK file chooser. A matching Hardfile HDA and GEO
+pair is treated as one image.
+.PP
+HFE floppy images and SCP flux captures are decoded and encoded with the bundled
+HxCFloppyEmulator command-line converter, hxcfe. Clean sector-based HFE v1
+images are editable and are decoded again for byte-exact verification before
+download. Advanced or damaged HFE and SCP images open read-only.
+.PP
+Any open OFS or FFS image can be converted to another container with the
+Export control in the pane header, or File, Export as. Every such image can be
+written back as its canonical sector image; OFS images of any size, and FFS S,
+M and L floppies, can also be wrapped as HFE or SCP. Flux exports are decoded
+again and compared byte for byte with the working sectors before the file is
+released. The control is disabled for media with no compatible target, such as
+a Hardfile HDA and GEO pair.
+.PP
+With the official Greaseweazle tools installed, the native edition can write an
+open floppy image to a connected drive and capture a physical disk back into a
+new working image. Captures may be taken as decoded OFS or FFS sectors, or as
+HFE or SCP flux for disks of unknown condition. A capture is only opened once
+Greaseweazle exits cleanly and leaves a usable image, and a failed capture
+removes its partial file.
+.SH ENVIRONMENT
+.TP
+.B AMIGA_FILE_FORGE_DISABLE_WEBKIT_SANDBOX
+Set to auto, 0 or 1. The default auto mode enables the compatibility fallback
+only when Ubuntu reports its restricted unprivileged-user-namespace policy.
+.TP
+.B AMIGA_FS-UAE_ROOT, AMIGA_BEM_ROOT, AMIGA_MAME_EXECUTABLE, AMIGA_MAME_ROM_PATH
+Override optional native emulator and firmware locations.
+.SH FILES
+.TP
+.I ~/.local/share/amiga-file-forge/work
+Private working images when XDG_DATA_HOME is unset.
+.TP
+.I ~/.config/amiga-file-forge
+Owner identity and atomic client state when XDG_CONFIG_HOME is unset.
+.SH SEE ALSO
+The installed handbook is under
+.IR /usr/share/doc/amiga-file-forge/ .
+The HFE, SCP and HxCFE guide is
+.IR /usr/share/doc/amiga-file-forge/handbook/HFE-HXC-GUIDE.md .

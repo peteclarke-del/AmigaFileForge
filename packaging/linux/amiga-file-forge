@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+project_root=/opt/amiga-file-forge
+python=/usr/bin/python3
+
+. "$project_root/tools/linux-desktop-environment.sh"
+amiga_prepare_desktop_environment
+
+cd "$project_root"
+PATH="$project_root/native/bin:$project_root/vendor/bin:$PATH"
+PYTHONPATH="$project_root/vendor:$project_root${PYTHONPATH:+:$PYTHONPATH}"
+LD_LIBRARY_PATH="$project_root/native/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH PYTHONPATH LD_LIBRARY_PATH
+exec "$python" -m desktop "$@"
