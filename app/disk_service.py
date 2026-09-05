@@ -79,7 +79,6 @@ from .flux_containers import (
     SCP,
     FluxContainer,
     FluxEngine,
-    flux_layout_for,
     is_flux_encodable,
     restore_omitted_tail_sector,
     sector_image_suffix,
@@ -547,7 +546,6 @@ class DiskService(
     # Flux geometry policy is shared with the SCP container and unit tested
     # without HxCFE; see app/flux_containers.py.
     _hfe_working_suffix = staticmethod(sector_image_suffix)
-    _flux_layout_for = staticmethod(flux_layout_for)
     _normalise_decoded_flux_size = staticmethod(restore_omitted_tail_sector)
 
     @property
