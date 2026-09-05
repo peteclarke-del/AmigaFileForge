@@ -11,7 +11,7 @@ from app.flux_containers import (
     SCP,
     SECTOR_SIZE,
     FluxEngine,
-    flux_layout_for,
+    FLUX_ENCODABLE_SIZES,
     is_flux_encodable,
     restore_omitted_tail_sector,
     sector_image_suffix,
@@ -46,14 +46,19 @@ class SectorGeometryTests(unittest.TestCase):
         self.assertEqual(sector_image_suffix("ffs", 20 * 1024 * 1024), ".hdf")
         self.assertEqual(sector_image_suffix("ffs", 800 * 1024), ".hdf")
 
-    def test_the_two_three_and_a_half_inch_densities_have_a_flux_layout(self) -> None:
-        self.assertEqual(flux_layout_for("ffs", 901_120), "AMIGADOS_DD")
-        self.assertEqual(flux_layout_for("ofs", 901_120), "AMIGADOS_DD")
-        self.assertEqual(flux_layout_for("ffs", 1_802_240), "AMIGADOS_HD")
-        self.assertIsNone(flux_layout_for("ffs", 800 * 1024))
+    def test_only_the_two_amiga_floppy_densities_encode_to_flux(self) -> None:
+        """HxCFE recognises an Amiga sector image from its size alone.
 
-    def test_the_five_inch_geometry_has_no_flux_layout(self) -> None:
-        self.assertIsNone(flux_layout_for("ofs", 450_560))
+        Its blank-layout list has no Amiga entry, so no layout name is passed;
+        what decides the question is whether the geometry is one HxCFE reads.
+        """
+        self.assertEqual(FLUX_ENCODABLE_SIZES, {901_120, 1_802_240})
+        self.assertTrue(is_flux_encodable("ffs", 901_120))
+        self.assertTrue(is_flux_encodable("ofs", 901_120))
+        self.assertTrue(is_flux_encodable("ffs", 1_802_240))
+        self.assertFalse(is_flux_encodable("ffs", 800 * 1024))
+
+    def test_the_five_inch_geometry_has_no_flux_equivalent(self) -> None:
         self.assertFalse(is_flux_encodable("ofs", 450_560))
 
     def test_a_hard_disk_image_is_never_flux_encodable(self) -> None:
@@ -142,7 +147,14 @@ class FluxContainerRegistryTests(unittest.TestCase):
 
 
 class FluxEngineTests(unittest.TestCase):
-    def test_encode_adds_a_layout_hint_only_when_the_geometry_needs_one(self) -> None:
+    def test_encode_never_names_a_layout(self) -> None:
+        """HxCFE has no Amiga entry in its blank-layout list.
+
+        Its own AMIGA_ADF loader reads a raw Amiga sector image and picks the
+        floppy interface mode from the size, so no layout is passed. Naming one
+        that does not exist makes HxCFE refuse the input outright, which is
+        exactly what an invented AMIGADOS_DD used to do.
+        """
         with tempfile.TemporaryDirectory() as folder:
             sectors = Path(folder) / "disk.adf"
             sectors.write_bytes(bytes(901_120))
@@ -156,24 +168,26 @@ class FluxEngineTests(unittest.TestCase):
             FluxEngine(run).encode_from_sectors(
                 sectors, SCP, Path(folder) / "out.scp", kind="ffs"
             )
-            self.assertIn("-uselayout:AMIGADOS_DD", seen[0])
+            self.assertFalse([item for item in seen[0] if item.startswith("-uselayout:")])
             self.assertIn("-conv:SCP_FLUX_STREAM", seen[0])
 
-            seen.clear()
-            # The 5.25-inch geometry has no blank layout HxCFE can build, so
-            # no hint is passed and the conversion is refused elsewhere.
+    def test_encode_refuses_a_geometry_hxcfe_cannot_write(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
             ofs = Path(folder) / "disk.adf"
             ofs.write_bytes(bytes(450_560))
-            FluxEngine(run).encode_from_sectors(
-                ofs, HFE, Path(folder) / "out.hfe", kind="ofs"
-            )
-            self.assertFalse([item for item in seen[0] if item.startswith("-uselayout:")])
-            self.assertIn("-conv:HXC_HFE", seen[0])
+
+            def run(arguments):
+                raise AssertionError("HxCFE must not be invoked for this geometry")
+
+            with self.assertRaisesRegex(DiskError, "no flux equivalent"):
+                FluxEngine(run).encode_from_sectors(
+                    ofs, HFE, Path(folder) / "out.hfe", kind="ofs"
+                )
 
     def test_encode_passes_the_reference_container_only_when_given(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             sectors = Path(folder) / "disk.adf"
-            sectors.write_bytes(bytes(450_560))
+            sectors.write_bytes(bytes(901_120))
             original = Path(folder) / "capture.scp"
             original.write_bytes(b"SCP")
             seen: list[list[str]] = []
@@ -185,12 +199,12 @@ class FluxEngineTests(unittest.TestCase):
 
             engine = FluxEngine(run)
             engine.encode_from_sectors(
-                sectors, SCP, Path(folder) / "a.scp", kind="ofs", reference=original
+                sectors, SCP, Path(folder) / "a.scp", kind="ffs", reference=original
             )
             self.assertEqual(_argument(seen[0], "-reffile:"), str(original))
 
             seen.clear()
-            engine.encode_from_sectors(sectors, SCP, Path(folder) / "b.scp", kind="ofs")
+            engine.encode_from_sectors(sectors, SCP, Path(folder) / "b.scp", kind="ffs")
             self.assertIsNone(_argument(seen[0], "-reffile:"))
 
     def test_round_trip_check_tolerates_one_omitted_tail_sector(self) -> None:
@@ -248,18 +262,18 @@ class FluxEngineTests(unittest.TestCase):
     def test_encode_and_verify_returns_a_container_that_round_trips(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             sectors = Path(folder) / "disk.adf"
-            sectors.write_bytes(bytes(450_560))
+            sectors.write_bytes(bytes(901_120))
             output = Path(folder) / "out.scp"
 
             def run(arguments):
                 if any(item.startswith("-conv:SCP_FLUX_STREAM") for item in arguments):
                     _write_output(arguments, b"SCP-FLUX")
                 else:
-                    _write_output(arguments, bytes(450_560))
+                    _write_output(arguments, bytes(901_120))
                 return ""
 
             result = FluxEngine(run).encode_and_verify(
-                sectors, SCP, output, kind="ofs", failure_message="nope"
+                sectors, SCP, output, kind="ffs", failure_message="nope"
             )
             self.assertEqual(result, output)
             self.assertEqual(output.read_bytes(), b"SCP-FLUX")
@@ -267,7 +281,7 @@ class FluxEngineTests(unittest.TestCase):
     def test_encode_and_verify_discards_a_container_that_does_not_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             sectors = Path(folder) / "disk.adf"
-            sectors.write_bytes(bytes(450_560))
+            sectors.write_bytes(bytes(901_120))
             output = Path(folder) / "out.scp"
 
             def run(arguments):
@@ -282,7 +296,7 @@ class FluxEngineTests(unittest.TestCase):
                     sectors,
                     SCP,
                     output,
-                    kind="ofs",
+                    kind="ffs",
                     failure_message="The sectors did not match.",
                 )
             self.assertFalse(
@@ -293,7 +307,7 @@ class FluxEngineTests(unittest.TestCase):
     def test_encode_and_verify_rejects_an_empty_engine_result(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             sectors = Path(folder) / "disk.adf"
-            sectors.write_bytes(bytes(450_560))
+            sectors.write_bytes(bytes(901_120))
 
             def run(_arguments):
                 return ""
