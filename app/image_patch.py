@@ -496,6 +496,10 @@ def _apply_metadata(service, session, row: dict) -> None:
         _protection_text(row.get("protection")),
         str(row.get("comment") or ""),
         int(row["side"]) if row.get("side") is not None else None,
+        # A patch reproduces the image it was taken from, so the entry keeps
+        # the datestamp the candidate recorded rather than the moment the
+        # patch happened to be applied.
+        str(row.get("datestamp") or "") or None,
     )
     _apply_access(service, session, row)
 
@@ -553,10 +557,13 @@ def _apply_normal_patch(
             )
         finally:
             temporary_path.unlink(missing_ok=True)
-        # put() already writes the candidate's protection bits. A
-        # second metadata pass is both redundant and ambiguous for numeric OFS
-        # manifest values, so only reproduce the access bits here.
-        _apply_access(service, session, row)
+        # put() writes the protection bits and comment, but the entry gets a
+        # fresh datestamp because it has genuinely just been written. A patch
+        # is supposed to reproduce the image it was taken from, datestamps
+        # included, so the recorded one is restored here. Without this the
+        # candidate fingerprint can never match and every patch fails its own
+        # verification on a metadata difference it created itself.
+        _apply_metadata(service, session, row)
         completed += 1
 
     for operation in metadata:
