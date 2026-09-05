@@ -2570,6 +2570,7 @@ class DiskService(
         with session.lock:
             disk_path = self.resolve(session)
             root = self.compound(disk_path, self.inner_for(session, "", side))
+            self.require_mounted_volume(session)
             mount_context = (
                 self.ffs_mount(session)
                 if self.mountable(session)
@@ -2860,6 +2861,8 @@ class DiskService(
         with session.lock:
             disk_path = self.resolve(session)
             root = self.compound(disk_path, self.inner_for(session, "", side))
+            if not is_kickfs:
+                self.require_mounted_volume(session)
             mount_context = (
                 self.kickfs_mount(session, writable=True)
                 if is_kickfs

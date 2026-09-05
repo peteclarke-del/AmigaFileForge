@@ -12,7 +12,6 @@ from pathlib import Path
 
 from app.disk_service import DiskService
 from app.download_archive import build_download_archive
-from app.menu.ffs import create_ffs_menu
 
 
 def measure(name: str, callback, repeats: int = 3) -> dict:
@@ -36,51 +35,42 @@ def run(profile: str = "quick") -> dict:
     with tempfile.TemporaryDirectory(prefix="amiga-forge-benchmark-") as folder:
         root = Path(folder)
         service = DiskService(root / "work")
-        hdf = service.create_blank("hdf", "BENCHMARK")
+        drive = service.create_blank("ffs-hard", "BENCH", "20MB")
+        # A drive opens on its partition table. Selecting the first partition
+        # is what opening one in the interface does, and it is what gives the
+        # benchmark a volume to write into.
+        service.select_partition(drive, 0)
         adf = service.create_blank("adf", "BENCH")
-        ffs = service.create_blank("ffs-hard", "BENCH", "20MB")
         hardfile = service.create_blank("hardfile", "BENCHSCSI", "20MB", "hardfile")
         files = []
         for number in range(file_count):
             path = root / f"FILE{number:04d}"
-            path.write_bytes((f"generated-{number}\r".encode("ascii")) * 16)
+            path.write_bytes((f"generated-{number}\n".encode("ascii")) * 16)
             group = number // 40 + 1
             files.append({"targetPath": f"PACK{group}/FILE{number:04d}", "hostPath": path})
         for number in range(min(20, file_count)):
-            service.put(adf, None, f"$.F{number:02d}", Path(files[number]["hostPath"]), "0x1900", "0x1900", None)
-        service.put_host_tree(ffs, None, "$", files, preserve_directories=True)
-        service.make_directory(hardfile, "$.GAMES")
-        service.make_directory(ffs, "$.MENU")
-        menu_entries = [
-            {
-                "title": f"Generated title {number + 1}",
-                "publisher": "Amiga File Forge",
-                "diskTitle": "BENCH",
-                "filename": "FILE0000",
-                "directory": f"$.PACK{number // 40 + 1}",
-                "action": "CHAIN",
-                "page": "4096",
-            }
-            for number in range(file_count)
-        ]
-        template_dir = Path(__file__).resolve().parents[1] / "app" / "assets" / "menu_templates"
-        create_ffs_menu(service, ffs, "$.MENU", menu_entries, template_dir)
+            service.put(adf, f"F{number:02d}", Path(files[number]["hostPath"]))
+        service.put_host_tree(drive, "", files, preserve_directories=True)
+        service.make_directory(hardfile, "GAMES")
 
         results = [
-            measure("hdf-list-511-slots", lambda: service.list_slots(hdf), repeats),
-            measure("ofs-list-20-files", lambda: service.browse_directory(adf, "$", None), repeats),
-            measure("ffs-list-generated-tree", lambda: service.browse_directory(ffs, "$.PACK1", None), repeats),
             measure(
-                f"ffs-bulk-import-{file_count}-files",
-                lambda: _bulk_ffs_import(service, files),
+                "drive-list-partitions",
+                lambda: service.list_partitions(drive),
+                repeats,
+            ),
+            measure("floppy-list-20-files", lambda: service.browse_directory(adf, ""), repeats),
+            measure(
+                "drive-list-generated-tree",
+                lambda: service.browse_directory(drive, "PACK1"),
                 repeats,
             ),
             measure(
-                f"ffs-menu-rebuild-{file_count}-entries",
-                lambda: create_ffs_menu(service, ffs, "$.MENU", menu_entries, template_dir),
+                f"drive-bulk-import-{file_count}-files",
+                lambda: _bulk_import(service, files),
                 repeats,
             ),
-            measure("hardfile-root-list", lambda: service.browse_directory(hardfile, "$", None), repeats),
+            measure("hardfile-root-list", lambda: service.browse_directory(hardfile, ""), repeats),
             measure("hardfile-checkpoint", lambda: _checkpoint_round_trip(service, hardfile), repeats),
             measure(
                 "hardfile-save-archive",
@@ -101,10 +91,11 @@ def _checkpoint_round_trip(service: DiskService, session) -> None:
     service.finish_automatic_checkpoint(session, token)
 
 
-def _bulk_ffs_import(service: DiskService, files: list[dict]) -> None:
+def _bulk_import(service: DiskService, files: list[dict]) -> None:
     target = service.create_blank("ffs-hard", "IMPORT", "20MB")
+    service.select_partition(target, 0)
     try:
-        service.put_host_tree(target, None, "$", files, preserve_directories=True)
+        service.put_host_tree(target, "", files, preserve_directories=True)
     finally:
         service.discard_session(target)
 
