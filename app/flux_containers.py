@@ -51,14 +51,15 @@ BROWSEABLE_KINDS = frozenset({"ofs", "ffs"})
 # HxCFE's raw sector reader, used to decode every container back to sectors.
 RAW_DECODER = "RAW_LOADER"
 
-# HxCFE needs an explicit blank-disk layout to encode an Amiga track, because
-# the Amiga writes whole tracks in its own MFM format rather than the
-# PC-compatible sector layout HxCFE would otherwise assume. The 5.25-inch
-# geometry has no blank layout of its own and so cannot be re-encoded.
-_FLUX_LAYOUTS = {
-    DOUBLE_DENSITY_SIZE: "AMIGADOS_DD",
-    HIGH_DENSITY_SIZE: "AMIGADOS_HD",
-}
+# The geometries HxCFE can wrap as flux. Its ``-rawlist`` of blank layouts is
+# entirely PC and workstation formats and contains no Amiga entry, so there is
+# no layout name to pass. None is needed: HxCFE's own AMIGA_ADF loader reads a
+# raw Amiga sector image directly and selects AMIGA_DD_FLOPPYMODE or
+# AMIGA_HD_FLOPPYMODE from its size. Naming a layout that does not exist makes
+# HxCFE refuse the input outright, so the encode passes no ``-uselayout``.
+#
+# The 5.25-inch geometry is absent deliberately: HxCFE has nothing that reads
+# it back, so it is decoded but never re-encoded.
 
 
 @dataclass(frozen=True)
@@ -114,21 +115,18 @@ def sector_image_suffix(kind: str, size: int, sides: int = 1) -> str:
     return ".adf" if size in FLOPPY_SIZES else ".hdf"
 
 
-def flux_layout_for(kind: str, size: int) -> str | None:
-    """Return HxCFE's blank-disk layout hint, or None when there is none."""
-    if kind not in BROWSEABLE_KINDS:
-        return None
-    return _FLUX_LAYOUTS.get(size)
+#: The Amiga floppy geometries HxCFE recognises and can re-encode.
+FLUX_ENCODABLE_SIZES = frozenset({DOUBLE_DENSITY_SIZE, HIGH_DENSITY_SIZE})
 
 
 def is_flux_encodable(kind: str, size: int) -> bool:
     """Whether these sectors can be wrapped as flux by HxCFE.
 
-    Only the double- and high-density 3.5-inch geometries have a blank layout
-    HxCFE can build. The 5.25-inch geometry and every hard-disk image have no
-    flux equivalent, and neither has a container to be wrapped in.
+    Only the DS/DD and high-density 3.5-inch geometries qualify. A hard-drive
+    image has no flux equivalent, and the 5.25-inch geometry has no reader in
+    HxCFE to check an encode against.
     """
-    return flux_layout_for(kind, size) is not None
+    return kind in BROWSEABLE_KINDS and size in FLUX_ENCODABLE_SIZES
 
 
 def restore_omitted_tail_sector(
@@ -207,10 +205,14 @@ class FluxEngine:
         uses it to preserve track timing that the sector view cannot express,
         so an edited image stays as close to the capture as possible.
         """
-        layout = flux_layout_for(kind, sectors.stat().st_size)
+        if not is_flux_encodable(kind, sectors.stat().st_size):
+            raise DiskError(
+                "This geometry has no flux equivalent HxCFE can write."
+            )
+        # No -uselayout: HxCFE identifies an Amiga sector image itself and
+        # chooses the matching floppy interface mode.
         return self._run_hxcfe([
             f"-finput:{sectors}",
-            *([f"-uselayout:{layout}"] if layout else []),
             f"-conv:{container.plugin}",
             f"-foutput:{output}",
             *([f"-reffile:{reference}"] if reference else []),
@@ -285,7 +287,7 @@ __all__ = [
     "SECTOR_SIZE",
     "FluxContainer",
     "FluxEngine",
-    "flux_layout_for",
+    "FLUX_ENCODABLE_SIZES",
     "is_flux_encodable",
     "restore_omitted_tail_sector",
     "sector_image_suffix",
