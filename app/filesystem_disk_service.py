@@ -22,6 +22,19 @@ class FilesystemDiskMixin:
             return True
         return session.kind == "hdf" and session.partition is not None
 
+    @staticmethod
+    def require_mounted_volume(session: ImageSession) -> None:
+        """Refuse a volume operation on a drive with no partition chosen.
+
+        A partitioned drive opens on its partition table, which is not a
+        volume: there is no single filesystem to write into until one is
+        selected. Saying so here keeps the message the same wherever the
+        attempt is made, rather than letting a caller reach the raw drive and
+        fail later on a mount that has no file operations at all.
+        """
+        if session.kind == "hdf" and session.partition is None:
+            raise DiskError("Choose a partition on this hard drive first.")
+
     @contextmanager
     def ffs_mount(self, session: ImageSession):
         """Open an identified FFS image without probing or copying it again.
