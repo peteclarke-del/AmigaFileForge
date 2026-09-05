@@ -34,8 +34,12 @@ WORKDIR /app
 # fs-uae is the reference Amiga emulator for the hand-off feature. It needs a
 # Kickstart ROM the user supplies; none is shipped, because Kickstart is not
 # redistributable.
+#
+# Only the emulator itself is installed. fs-uae-launcher is its GTK front end,
+# it was dropped from Debian after bookworm, and nothing here invokes it: the
+# workbench builds an fs-uae command line directly.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    fs-uae fs-uae-launcher xvfb xauth x11vnc novnc websockify imagemagick xdotool \
+    fs-uae xvfb xauth x11vnc novnc websockify imagemagick xdotool \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=python-deps /python-install/usr/local /usr/local
