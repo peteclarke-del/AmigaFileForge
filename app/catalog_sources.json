@@ -1,0 +1,235 @@
+[
+  {
+    "id": "aminet",
+    "name": "Aminet",
+    "type": "configured",
+    "url": "https://aminet.net/",
+    "machines": [
+      "a500",
+      "a500plus",
+      "a600",
+      "a1200",
+      "a2000",
+      "a3000",
+      "a4000",
+      "cd32",
+      "amigaos"
+    ],
+    "enabled": true,
+    "direct": true,
+    "options": {
+      "loader": "page",
+      "parser": "zip-links",
+      "queryTemplate": "search?query={query}",
+      "defaultPublisher": "Aminet contributors",
+      "cacheSeconds": 3600
+    }
+  },
+  {
+    "id": "whdload",
+    "name": "WHDLoad install packages",
+    "type": "configured",
+    "url": "https://whdload.de/games/",
+    "machines": [
+      "a500",
+      "a500plus",
+      "a600",
+      "a1200",
+      "a2000",
+      "a3000",
+      "a4000",
+      "cd32"
+    ],
+    "enabled": true,
+    "direct": true,
+    "options": {
+      "loader": "page",
+      "parser": "zip-links",
+      "defaultPublisher": "WHDLoad",
+      "cacheSeconds": 86400
+    }
+  },
+  {
+    "id": "hall-of-light",
+    "name": "Hall of Light Amiga database",
+    "type": "configured",
+    "url": "https://amiga.abime.net/",
+    "machines": [
+      "a500",
+      "a500plus",
+      "a600",
+      "a1200",
+      "a2000",
+      "a3000",
+      "a4000",
+      "cd32"
+    ],
+    "enabled": true,
+    "direct": false,
+    "options": {
+      "loader": "page",
+      "parser": "links",
+      "queryTemplate": "games/search?q={query}",
+      "cacheSeconds": 86400
+    }
+  },
+  {
+    "id": "lemon-amiga",
+    "name": "Lemon Amiga",
+    "type": "configured",
+    "url": "https://www.lemonamiga.com/",
+    "machines": [
+      "a500",
+      "a500plus",
+      "a600",
+      "a1200",
+      "a2000",
+      "a3000",
+      "a4000",
+      "cd32"
+    ],
+    "enabled": true,
+    "direct": false,
+    "options": {
+      "loader": "page",
+      "parser": "links",
+      "queryTemplate": "games/list.php?list_title={query}",
+      "cacheSeconds": 86400
+    }
+  },
+  {
+    "id": "everygamegoing",
+    "name": "Every Game Going (machine identifiers must be configured)",
+    "type": "configured",
+    "url": "https://www.everygamegoing.com/",
+    "machines": [
+      "a500",
+      "a500plus",
+      "a600",
+      "a1200",
+      "a2000",
+      "a3000",
+      "a4000",
+      "cd32"
+    ],
+    "enabled": false,
+    "direct": true,
+    "options": {
+      "loader": "machine-index",
+      "parser": "item-rows",
+      "resolver": "media-links",
+      "landingTemplate": "landingMachineType/items/machine_type_id/{machineId}/paarent_type/games/",
+      "itemPathPrefix": "/litem/",
+      "downloadPathContains": "/download/",
+      "machineProfiles": {},
+      "cacheSeconds": 86400
+    }
+  },
+  {
+    "id": "itch-amiga",
+    "name": "itch.io Amiga downloads",
+    "type": "configured",
+    "url": "https://itch.io/search",
+    "machines": [
+      "a500",
+      "a500plus",
+      "a600",
+      "a1200",
+      "a2000",
+      "a3000",
+      "a4000",
+      "cd32",
+      "amigaos"
+    ],
+    "enabled": true,
+    "direct": true,
+    "options": {
+      "loader": "page",
+      "parser": "html-cards",
+      "queryTemplate": "?q={machineQuery}+{query}",
+      "machineQueries": {
+        "a500": "amiga 500",
+        "a500plus": "amiga 500",
+        "a600": "amiga 600",
+        "a1200": "amiga 1200",
+        "a2000": "amiga 2000",
+        "a3000": "amiga 3000",
+        "a4000": "amiga 4000",
+        "cd32": "amiga cd32",
+        "amigaos": "amigaos",
+        "all": "amiga"
+      },
+      "cardClass": "game_cell",
+      "titleClass": "game_title",
+      "descriptionClass": "game_text",
+      "publisherClass": "game_author",
+      "resolver": "upload-buttons",
+      "resolverOptions": {
+        "mediaExtensions": [
+          "adf",
+          "adz",
+          "dms",
+          "hdf",
+          "hda",
+          "lha",
+          "lzx",
+          "hfe",
+          "ipf"
+        ],
+        "archiveTerms": [
+          "amiga",
+          "adf",
+          "whdload",
+          "aga",
+          "ocs",
+          "ecs"
+        ],
+        "requestTemplate": "{pageUrl}/file/{uploadId}?source=view_game&as_props=1"
+      },
+      "resultValidationLimit": 40,
+      "detailThreads": 6,
+      "cacheSeconds": 3600
+    }
+  },
+  {
+    "id": "os4depot",
+    "name": "OS4Depot AmigaOS 4 packages",
+    "type": "configured",
+    "url": "https://os4depot.net/index.php?function=search&search={query}",
+    "machines": [
+      "amigaos"
+    ],
+    "enabled": true,
+    "direct": true,
+    "options": {
+      "loader": "page",
+      "parser": "zip-links",
+      "defaultPublisher": "OS4Depot contributors",
+      "cacheSeconds": 86400
+    }
+  },
+  {
+    "id": "aminet-dev",
+    "name": "Aminet development tree",
+    "type": "configured",
+    "url": "https://aminet.net/tree?path=dev",
+    "machines": [
+      "a500",
+      "a500plus",
+      "a600",
+      "a1200",
+      "a2000",
+      "a3000",
+      "a4000",
+      "cd32",
+      "amigaos"
+    ],
+    "enabled": false,
+    "direct": true,
+    "options": {
+      "loader": "page",
+      "parser": "package-paragraphs",
+      "cacheSeconds": 86400
+    }
+  }
+]

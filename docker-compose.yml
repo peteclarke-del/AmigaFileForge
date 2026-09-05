@@ -1,0 +1,26 @@
+services:
+  amiga-file-forge:
+    build: .
+    image: amiga-file-forge:latest
+    container_name: amiga-file-forge
+    ports:
+      - "8666:8666"
+      - "8668:8668"
+    environment:
+      AMIGA_FILE_FORGE_WORK_DIR: /app/work
+      AMIGA_MAX_UPLOAD_GIB: "8"
+    volumes:
+      - amiga-file-forge-work:/app/work
+    restart: unless-stopped
+    command: >-
+      sh -c "websockify --web=/usr/share/novnc 8668 localhost:5900 &
+      exec gunicorn --bind 0.0.0.0:8666 --workers 1 --threads 8 --timeout 300
+      --access-logfile - app.wsgi:app"
+
+volumes:
+  amiga-file-forge-work:
+    name: amiga-file-forge-work
+
+networks:
+  default:
+    name: amiga-file-forge-network

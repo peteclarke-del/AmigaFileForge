@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Python correctness lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # Runs before the image build so a broken name or import fails in
+      # seconds rather than after a full multi-stage Docker build.
+      - name: Check correctness rules
+        uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.16.4"
+          args: check --output-format github
+
+  test:
+    name: Python, JavaScript and browser regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install browser test dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build application image
+        run: docker build --tag amiga-file-forge:ci .
+
+      - name: Run Python tests in the application image
+        run: >-
+          docker run --rm
+          --volume "${{ github.workspace }}:/source"
+          --workdir /source
+          amiga-file-forge:ci
+          python -m unittest discover -s tests -v
+
+      - name: Run generated-media performance smoke profile
+        run: >-
+          docker run --rm
+          --volume "${{ github.workspace }}:/source"
+          --workdir /source
+          amiga-file-forge:ci
+          python -m tools.benchmark_media --profile quick --output output/benchmark-ci.json
+
+      - name: Run JavaScript unit tests
+        run: node tests/run_js_tests.js
+
+      - name: Start application for browser tests
+        run: >-
+          docker run --detach --name amiga-file-forge-ci
+          --publish 8666:8666
+          amiga-file-forge:ci
+
+      - name: Wait for the application
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8666/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs amiga-file-forge-ci
+          exit 1
+
+      - name: Run browser regressions
+        run: npm run test:browser
+
+      - name: Show application log on failure
+        if: failure()
+        run: docker logs amiga-file-forge-ci
+
+      - name: Stop browser-test application
+        if: always()
+        run: docker rm --force amiga-file-forge-ci || true
+
+  multiarch:
+    name: Build ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            tag: amd64
+          - platform: linux/arm64
+            tag: arm64
+          - platform: linux/arm/v7
+            tag: armv7
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build without publishing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: false
+          load: true
+          tags: amiga-file-forge:matrix-${{ matrix.tag }}
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      - name: Verify architecture-native runtime
+        run: |
+          mkdir -p output/release-evidence
+          docker run --rm \
+            --volume "${{ github.workspace }}:/source" \
+            --workdir /source \
+            amiga-file-forge:matrix-${{ matrix.tag }} \
+            sh -lc 'set -eu; uname -m; test -x /usr/local/bin/hxcfe; test -x /opt/fs-uae/fs-uae; test -x /opt/vamiga/vamiga; python -c "import tempfile; from pathlib import Path; import flask; import amiganut.ffs; import amiganut.kickfs; from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_M68K, Cs; from app.server import create_app; Cs(CS_ARCH_ARM, 0); Cs(CS_ARCH_M68K, 0); Cs(CS_ARCH_M68K, 0); work = Path(tempfile.mkdtemp()); app = create_app(work_dir=work); client = app.test_client(); response = client.get(\"/api/health\"); assert response.status_code == 200, response.get_data(as_text=True); print(\"Architecture-native runtime gate passed\")"' \
+            2>&1 | tee output/release-evidence/${{ matrix.tag }}.log
+
+      - name: Verify service health on the target architecture
+        run: |
+          container="amiga-file-forge-${{ matrix.tag }}"
+          docker run --detach --name "$container" --publish 8666:8666 amiga-file-forge:matrix-${{ matrix.tag }}
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:8666/api/health | tee output/release-evidence/${{ matrix.tag }}-health.json; then
+              docker rm --force "$container"
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container" | tee -a output/release-evidence/${{ matrix.tag }}.log
+          docker rm --force "$container"
+          exit 1
+
+      - name: Retain architecture evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-evidence-${{ matrix.tag }}
+          path: output/release-evidence/
+          if-no-files-found: warn

@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+launcher_path=$(readlink -f -- "$0")
+project_root=$(CDPATH= cd -- "$(dirname -- "$launcher_path")/.." && pwd)
+python="$project_root/.venv-desktop/bin/python"
+
+if [ ! -x "$python" ]; then
+    echo "Amiga File Forge desktop is not installed in this checkout." >&2
+    echo "Run tools/install-linux-desktop.sh first." >&2
+    exit 2
+fi
+
+cd "$project_root"
+PATH="$(dirname -- "$python"):$PATH"
+export PATH
+
+. "$project_root/tools/linux-desktop-environment.sh"
+amiga_prepare_desktop_environment
+
+exec "$python" -m desktop "$@"

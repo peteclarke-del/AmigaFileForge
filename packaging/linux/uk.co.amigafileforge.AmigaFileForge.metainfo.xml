@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>uk.co.amigafileforge.AmigaFileForge</id>
+  <name>Amiga File Forge</name>
+  <summary>Open and maintain Amiga media images</summary>
+  <developer id="uk.co.amigafileforge">
+    <name>Amiga File Forge contributors</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      Amiga File Forge browses, edits, validates and converts Amiga,
+      Amiga 600, Amiga 4000 and AmigaOS disk, dms, ROM and hard-drive images.
+    </p>
+    <p>
+      The Linux application uses the same filesystem and editor implementation
+      as the web edition, with a GTK file chooser, desktop file associations
+      and private XDG working state.
+    </p>
+    <p>
+      A bundled architecture-native HxCFloppyEmulator command-line converter
+      opens, creates and verifies supported HFE floppy images and decodes SCP
+      flux captures without requiring
+      a separate host installation.
+    </p>
+    <p>
+      Open OFS and FFS images can be converted between containers. Any of them
+      exports as its canonical sector image, and OFS images together with FFS
+      S, M and L floppies also export as HFE or SCP. Every flux export is
+      decoded again and compared byte for byte with the working sectors before
+      the file is released.
+    </p>
+    <p>
+      With the official Greaseweazle tools installed, the native edition writes
+      an open floppy image to a connected drive and captures a physical disk
+      back into a new working image, as decoded sectors or as HFE or SCP flux.
+    </p>
+  </description>
+  <launchable type="desktop-id">uk.co.amigafileforge.AmigaFileForge.desktop</launchable>
+  <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
+  <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
+  <releases>
+    <release version="1.1.1" date="2026-09-02">
+      <description>
+        <p>Keeps the source disc's boot option when its files are installed into the root of an FFS image, so an installed disc still starts itself.</p>
+      </description>
+    </release>
+    <release version="1.1.0" date="2026-08-29">
+      <description>
+        <p>Adds SuperCard Pro flux support, container export, reading and writing real disks through a Greaseweazle or a floppy controller, and buildable Windows, macOS and RPM editions.</p>
+      </description>
+    </release>
+    <release version="1.0.2" date="2026-08-25">
+      <description>
+        <p>Restores reliable Linux application-menu and running-window icons with fixed-size fallbacks, explicit GTK identity and complete icon-cache refreshes.</p>
+      </description>
+    </release>
+    <release version="1.0.1" date="2026-08-25">
+      <description>
+        <p>Adds an About dialog with live application, host and filesystem-engine details, package links and licence information.</p>
+      </description>
+    </release>
+    <release version="1.0.0" date="2026-08-25">
+      <description>
+        <p>First stable release with shared web and native Linux workbenches, including bundled HxCFE support for HFE floppy images.</p>
+      </description>
+    </release>
+  </releases>
+  <provides>
+    <binary>amiga-file-forge</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+</component>

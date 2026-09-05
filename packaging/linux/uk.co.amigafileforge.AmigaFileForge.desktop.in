@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Amiga File Forge
+Comment=Open and maintain Amiga media images
+Exec=@EXEC@ %F
+TryExec=@TRY_EXEC@
+Icon=amiga-file-forge
+Terminal=false
+Categories=Utility;FileTools;
+MimeType=application/x-amiga-ofs;application/x-amiga-hdf;application/x-amiga-ffs;application/x-amiga-dms;application/x-amiga-rom;application/x-amiga-hfe;
+StartupNotify=true
+StartupWMClass=uk.co.amigafileforge.AmigaFileForge

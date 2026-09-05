@@ -1,0 +1,10 @@
+{
+  "name": "amiga-file-forge-browser-tests",
+  "private": true,
+  "scripts": {
+    "test:browser": "node tests/browser/editor-menu-regression.cjs && node tests/browser/workspace-regression.cjs && node tests/browser/image-workflow-regression.cjs && node tests/browser/workspace-analysis-regression.cjs && node tests/browser/collection-catalogue-regression.cjs && node tests/browser/cheat-analysis-regression.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

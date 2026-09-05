@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications || true
+fi
+if command -v update-mime-database >/dev/null 2>&1; then
+    update-mime-database /usr/share/mime || true
+fi
+for icon_cache_tool in gtk4-update-icon-cache gtk-update-icon-cache; do
+    if command -v "$icon_cache_tool" >/dev/null 2>&1; then
+        "$icon_cache_tool" -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+    fi
+done
+
+exit 0
