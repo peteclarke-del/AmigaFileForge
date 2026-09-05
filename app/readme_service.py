@@ -129,7 +129,7 @@ def _filesystem_catalogue(service: DiskService, session: ImageSession) -> list[s
         sides = [0, 2] if service.is_two_volume_image(session) else [None]
         object_count = 0
         for side in sides:
-            for row in service.list_ofs_catalogue_files(session, None, side):
+            for row in service.list_ofs_catalogue_files(session, side):
                 display_path = row["path"]
                 if side is not None:
                     display_path = f"Side {side}: {display_path}"

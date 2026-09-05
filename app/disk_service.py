@@ -2607,13 +2607,20 @@ class DiskService(
         protection: str,
         comment: str = "",
         side: int | None = None,
+        datestamp: str | None = None,
     ) -> dict:
-        """Update an entry's protection bits and comment, leaving its data alone.
+        """Update an entry's protection bits, comment and datestamp.
 
-        These are the two things AmigaDOS lets a person change about a file
+        These are the things AmigaDOS lets a person change about a file
         without rewriting it. There is no load or execution address to change:
         an AmigaDOS load file carries its own relocation information, so where
         it goes in memory is decided when it is run.
+
+        ``datestamp`` is normally left alone, because editing a file's comment
+        is not a reason to claim the file changed. A caller reproducing a
+        recorded image passes the datestamp it recorded, so the result matches
+        the image it is meant to reproduce rather than the moment it was
+        rebuilt.
         """
         if session.kind in {"rom", "dms"}:
             raise DiskError("This view does not contain editable file catalogue addresses.")
@@ -2625,6 +2632,7 @@ class DiskService(
             raise DiskError("The Amiganut catalogue metadata API is unavailable.") from exc
         parsed_protection = self._protection_value(protection)
         new_comment = " ".join(str(comment or "").split())[:79]
+        requested_datestamp = self._parse_datestamp(datestamp)
 
         def update(mount, target: str) -> dict:
             if not isinstance(mount, AmigaMetadata):
@@ -2637,18 +2645,19 @@ class DiskService(
                 # both are editable; only its length is meaningless.
                 pass
             current = mount.amiga_meta(target)
+            moment = requested_datestamp or current.datestamp
             mount.set_amiga_meta(
                 target,
                 AmigaMeta(
                     protection=parsed_protection,
                     comment=new_comment,
-                    datestamp=current.datestamp,
+                    datestamp=moment,
                 ),
             )
             return {
                 "protection": parsed_protection,
                 "comment": new_comment,
-                "datestamp": current.datestamp,
+                "datestamp": moment,
                 "length": int(stat.length or 0),
             }
 
@@ -2675,6 +2684,16 @@ class DiskService(
         return metadata
 
     @staticmethod
+    def _parse_datestamp(value: object):
+        """Read a recorded ISO datestamp, or None to leave the entry's alone."""
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            return None
+
     @staticmethod
     def _protection_value(value: object) -> int:
         """Parse a protection long a person supplied.
@@ -3317,8 +3336,8 @@ class DiskService(
         ofs_rows: dict[int | None, list[dict]] = {}
         if source.kind == "ofs":
             if self.is_two_volume_image(source):
-                ofs_rows[0] = self.list_ofs_catalogue_files(source, None, 0)
-                ofs_rows[2] = self.list_ofs_catalogue_files(source, None, 2)
+                ofs_rows[0] = self.list_ofs_catalogue_files(source, 0)
+                ofs_rows[2] = self.list_ofs_catalogue_files(source, 2)
                 source_has_files = bool(ofs_rows[0] or ofs_rows[2])
             else:
                 ofs_rows[None] = self.list_ofs_catalogue_files(source, None)
@@ -3363,7 +3382,7 @@ class DiskService(
                 rebuilt, _tracks = self.convert_dms(source, "adf")
                 try:
                     self._copy_image_listing_to_ffs(
-                        rebuilt, None, None, target, target_directory, report,
+                        rebuilt, None, target, target_directory, report,
                     )
                     self.carry_boot_option(rebuilt, target, target_directory)
                 finally:
@@ -3380,19 +3399,18 @@ class DiskService(
                         )
                         self.make_directory(target, volume_directory)
                         self._copy_rows_to_ffs(
-                            source, None, side, rows, target, volume_directory, report
+                            source, side, rows, target, volume_directory, report
                         )
                         report(f"Extracted volume {number}", number, 2)
                 else:
                     side = 0 if first else 2
                     self._copy_rows_to_ffs(
-                        source, None, side, first or second, target, target_directory, report
+                        source, side, first or second, target, target_directory, report
                     )
             else:
                 if source.kind == "ofs":
                     self._copy_image_listing_to_ffs(
                         source,
-                        None,
                         None,
                         target,
                         target_directory,
@@ -3401,7 +3419,7 @@ class DiskService(
                     )
                 else:
                     self._copy_image_listing_to_ffs(
-                        source, None, None, target, target_directory, report
+                        source, None, target, target_directory, report
                     )
             if source.kind in {"ofs", "dms", "ffs"}:
                 # Extraction into the root can keep the source's boot option,

@@ -149,7 +149,7 @@ const target = process.env.AMIGA_FILE_FORGE_URL || "http://127.0.0.1:8666";
       const response = await fetch(`/api/images/${imageId}/empty-file`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ destination: "$", name: "PATCHED", load: "4096", execute: "4096" }),
+        body: JSON.stringify({ destination: "", name: "PATCHED", protection: "----rwed" }),
       });
       if (!response.ok) throw new Error((await response.json()).error || "Could not prepare patch candidate");
     }, ids[1]);
@@ -197,7 +197,7 @@ const target = process.env.AMIGA_FILE_FORGE_URL || "http://127.0.0.1:8666";
     }, ids);
     await page.waitForFunction(() => !document.querySelector("[data-apply-patch]")?.disabled);
     const preflight = await page.locator(".patch-preflight-results").textContent();
-    if (!preflight.includes("BASEblank.adf") || !preflight.includes("CANDIDATEblank.adf") || !preflight.includes("1operations") || !preflight.includes("$.PATCHEDadded")) {
+    if (!preflight.includes("BASEblank.adf") || !preflight.includes("CANDIDATEblank.adf") || !preflight.includes("1operations") || !preflight.includes("PATCHEDadded")) {
       throw new Error(`Patch preflight did not describe the exact change: ${preflight}`);
     }
     const preflightJob = await page.evaluate(async () => {

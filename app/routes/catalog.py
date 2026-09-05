@@ -115,7 +115,7 @@ def _install_amigaos_package(service: DiskService, target, target_path: str, con
             for part in parts[:-1]:
                 parent = amiga_paths.join(parent, part)
                 if parent.casefold() not in made:
-                    service.mutate(target, None, ["mkdir", "-p", "{image}:" + parent])
+                    service.mutate(target, ["mkdir", "-p", "{image}:" + parent])
                     made.add(parent.casefold())
             destination = amiga_paths.join(parent, parts[-1])
             # AmigaDOS stores no load or execution address, so the only
