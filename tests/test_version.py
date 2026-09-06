@@ -11,7 +11,7 @@ METAINFO = ROOT / "packaging/linux/uk.co.amigafileforge.AmigaFileForge.metainfo.
 
 class VersionTests(unittest.TestCase):
     def test_packaged_version_matches_stable_release(self):
-        self.assertEqual(application_version(), "1.1.1")
+        self.assertEqual(application_version(), "1.2.0")
 
 
 class ReleaseRecordTests(unittest.TestCase):

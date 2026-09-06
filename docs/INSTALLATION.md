@@ -21,7 +21,7 @@ WebKit 6 packages.
 Install a downloaded package with APT so its system dependencies are resolved:
 
 ```bash
-sudo apt install ./amiga-file-forge_1.1.1-1~deb13_amd64.deb
+sudo apt install ./amiga-file-forge_1.2.0-1~deb13_amd64.deb
 ```
 
 Launch **Amiga File Forge** from the application menu, open an associated image

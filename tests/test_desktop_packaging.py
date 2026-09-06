@@ -154,10 +154,18 @@ class DesktopPackagingTests(unittest.TestCase):
         self.assertTrue(application.issubset(package_lock))
 
     def test_stable_release_builds_debian_and_ubuntu_for_supported_architectures(self) -> None:
+        """The release workflow covers every distribution and architecture claimed.
+
+        This asserts nothing about which version is being released. A literal
+        version here would have to be edited for every release, in a test whose
+        subject is the workflow rather than the version, and forgetting it
+        fails the suite for a reason that has nothing to do with packaging.
+        ``ReleaseRecordTests`` owns that check, against ``VERSION`` as the one
+        source of truth.
+        """
         workflow = (ROOT / ".github/workflows/release.yml").read_text(
             encoding="utf-8"
         )
-        self.assertEqual("1.1.1", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         for required in (
             "debian:trixie-slim",
             "ubuntu:24.04",

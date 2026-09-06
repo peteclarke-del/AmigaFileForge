@@ -116,7 +116,32 @@ project documentation. An unchecked item remains in scope.
 - [x] Feed authoritative whole-HDF emulator results back into menu health and
       STACK diagnostics.
 
-## 7. Writable archives and DMS projects
+## 7. Installing a floppy onto a hard drive
+
+- [x] Offer installing a disc as a third choice beside copying its contents and
+      storing the image, wherever the destination is a mounted volume on a hard
+      drive.
+- [x] Stage a disc into a host tree, merging a multi-disc set into one location
+      and preserving protection bits and comments through sidecars.
+- [x] Keep both files when two discs of one set carry the same path with
+      different contents, rather than reducing the set to its last disc.
+- [x] Treat restaging a disc under an existing label as a correction that
+      replaces its files and clears any conflict recorded against it.
+- [x] List staged titles, install one into an open volume and discard one,
+      so a set can be finished after the last disc is staged.
+- [x] Install the WHDLoad program from its author's site, with Aminet as a
+      fallback, detecting the installed version and preserving local
+      preferences.
+- [x] Accept a WHDLoad slave bare or inside the archive it was published in.
+- [x] Boot a drive under emulation with a title's discs inserted, for software
+      that can only be installed by its own installer.
+- [x] Read LHA archives in this tree, so the feature does not depend on a
+      decompressor present in the container and absent from the native builds.
+- [ ] Report WHDLoad slave coverage for a staged title once a local slave
+      collection can be nominated, so a set that cannot yet run says so before
+      it is installed.
+
+## 8. Writable archives and DMS projects
 
 - [x] Browse ZIP, TAR, compressed TAR, GZIP, BZIP2 and XZ hierarchies with
       bounded extraction and path safety.
@@ -132,7 +157,7 @@ project documentation. An unchecked item remains in scope.
 - [x] Enable DMS member editing only when the reconstruction proof succeeds;
       retain read-only behaviour for ambiguous or unsupported recordings.
 
-## 8. Expanded menu interpretation
+## 9. Expanded menu interpretation
 
 - [x] Detect, edit and preview supported Workbench, Workbench 4R, WHDLoad and other
       explicitly modelled menu records.
@@ -145,7 +170,7 @@ project documentation. An unchecked item remains in scope.
 - [ ] Promote a captured interpreter profile only after repeatable evidence and
       regression fixtures exist for that menu family.
 
-## 9. Collection database
+## 10. Collection database
 
 - [x] Export manifests containing logical paths, HDF slots, metadata, hashes
       and recognised menu records.
@@ -163,7 +188,7 @@ project documentation. An unchecked item remains in scope.
       catalogue without exposing one web profile's or Linux user's records to
       another.
 
-## 10. Hardware deployment assistant
+## 11. Hardware deployment assistant
 
 - [x] Model target machines, filing systems, expansions, accelerator state and managed
       emulator capabilities in hardware profiles.
@@ -179,7 +204,7 @@ project documentation. An unchecked item remains in scope.
 - [x] Validate the generated layout itself before download and report anything
       that still requires a manual hardware step.
 
-## 11. Cheat analysis and verified patches
+## 12. Cheat analysis and verified patches
 
 - [x] Find conservative AmigaBASIC gameplay variables, direct memory writes and
       terminal-value tests from one selected file.
@@ -194,7 +219,7 @@ project documentation. An unchecked item remains in scope.
 - [x] Add a user-owned cheat library that matches exact image and file hashes,
       never title alone.
 
-## 12. Linux desktop host
+## 13. Linux desktop host
 
 - [x] Add a GTK 4 and Libadwaita application host around the shared frontend.
 - [x] Run the shared Flask application on an authenticated random loopback
