@@ -3,6 +3,11 @@
 /samples/
 /output/
 
+# Release build output: source archives and native packages are large and are
+# rebuilt from a tag rather than committed.
+/dist/
+/release/
+
 # Amiga File Forge working data belongs in Docker's named volume.
 /work/
 
