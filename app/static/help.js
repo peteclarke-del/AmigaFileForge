@@ -28,6 +28,7 @@ function showHelp() {
           <strong>WORKFLOWS</strong>
           <a href="#help-online">Find and install online software</a>
           <a href="#help-transfer">Copy and drag between panes</a>
+          <a href="#help-install">Install a floppy onto a hard drive</a>
           <a href="#help-maintenance">Check and compact</a>
           <a href="#help-hex-editor">Raw image hex editor</a>
           <a href="#help-analysis">Workbench and analysis</a>
@@ -606,6 +607,15 @@ function showHelp() {
               </ol>
             </div>
             <div class="help-task">
+              <h4>Install a disc rather than copy it</h4>
+              <ol>
+                <li>Open the destination partition on the hard drive. A floppy pane has nowhere to install to, and a partition table is not a volume, so neither offers the option.</li>
+                <li>Drag a disc image in, or use <strong>File &rarr; Insert File</strong>, then set <strong>Import as</strong> to <strong>Install it onto this drive</strong>.</li>
+                <li>Give the title a name. Discs staged under the same name are merged into one tree, so a multi-disc set stays one thing to install.</li>
+                <li>Choose a method, then confirm. Every method stages the disc first, so an install that fails halfway has still preserved its contents.</li>
+              </ol>
+            </div>
+            <div class="help-task">
               <h4>Move items inside one FFS image</h4>
               <ol>
                 <li>Select one or more files or directories in an FFS pane.</li>
@@ -674,6 +684,48 @@ function showHelp() {
               </ol>
               <div class="help-warning"><strong>Existing imports are not silently rewritten:</strong> compatibility analysis runs while files are copied into FFS. To repair a directory imported with an older version, delete that directory and import its DMS, ADF, ADZ, HFE or SCP again. If the existing directory is populated, choose Replace only after confirming it is the correct target.</div>
             </div>
+          </section>
+          <section id="help-install">
+            <h3>Install a floppy onto a hard drive</h3>
+            <p class="help-lead">Copying a game disk into an HDF gives you the files. It does not give you something that runs: the title still expects <code>DF0:</code>, and the drive still has no idea it is there.</p>
+            <div class="help-task">
+              <h4>Stage it for installing later</h4>
+              <ol>
+                <li>The default, and usually the right answer for a multi-disc set. Each disc is extracted into a staging drawer named after the title, and later discs merge into the same tree.</li>
+                <li>Nothing is emulated, downloaded or guessed at, so this always works and always works quickly.</li>
+                <li>Where two discs carry the same path with different contents, the first is kept and the later one is filed under <code>alternates/</code>. A set is never reduced to whichever disc you staged last.</li>
+                <li>Protection bits and comments travel in the sidecar files written beside the payload, so a staged tree brought back in later still has them.</li>
+                <li>Finish the install here when the set is complete, or copy the staging drawer to a real Amiga and finish it there.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>Install with WHDLoad</h4>
+              <ol>
+                <li>For games and demos. The drive is checked for <code>C:WHDLoad</code> first, and the current release is fetched from whdload.de when there is none, with Aminet as a fallback.</li>
+                <li>An existing <code>S:WHDLoad.prefs</code> is never overwritten. Preferences you tuned for your own machine survive a reinstall.</li>
+                <li>The per-title slave cannot be downloaded. The author&rsquo;s site refuses its game index to anything that is not a browser, and Aminet does not carry slaves.</li>
+                <li>Supply a slave yourself, either as the bare <code>.slave</code> file or as the small LHA it was published in. Amiga File Forge reads LHA itself, so you do not need an unpacker.</li>
+                <li>An install with no slave is reported as incomplete. The drawer and its files are ready for the slave whenever you have it.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>Run the disc&rsquo;s own installer</h4>
+              <ol>
+                <li>For productivity software, which asks which drawer, which language and which screen mode. No tool can answer those for you.</li>
+                <li>The emulator boots this drive with the disc already in <code>DF0:</code> and hands you the keyboard. Up to four discs can be inserted at once, so a swap is a menu choice rather than a restart.</li>
+                <li>The drive is attached whole, so the installer sees the partitions and the Workbench you actually built. That means the drive needs a working Workbench, and the machine needs a Kickstart ROM you supplied.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>Finish a staged set later</h4>
+              <ol>
+                <li>Choose <strong>Tools &rarr; Staged installations</strong>. Every title waiting is listed with its discs and where its files are.</li>
+                <li>Open the partition you want it on, then select <strong>Install here</strong>. The drawer name is yours to set.</li>
+                <li>Any file that differed between two discs is named, so a set that needed a judgement call says so rather than looking complete.</li>
+                <li>Discarding a title deletes only the extracted copies. The original images are untouched.</li>
+              </ol>
+            </div>
+            <div class="help-note"><strong>Undo:</strong> installing a staged title, installing WHDLoad and adding a slave each take a checkpoint before they run. Staging changes no image, so it takes none.</div>
           </section>
           <section id="help-maintenance">
             <h3>Check, compact and monitor operations</h3>

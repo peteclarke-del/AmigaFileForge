@@ -1087,6 +1087,23 @@ body:has(dialog[open].failed) .pane .loading { display: none; }
 .pair-file-drop { margin: 14px 0 5px; padding: 14px; border: 2px dashed var(--line); border-radius: 9px; background: var(--cream); color: var(--muted); text-align: center; font: 10px/1.45 DM Mono, monospace; transition: border-color .12s ease, background .12s ease, box-shadow .12s ease; }
 .check-field { display: flex; align-items: center; gap: 8px; margin: 15px 0; color: var(--muted); font-size: 11px; }
 .check-field input { width: 16px; height: 16px; accent-color: var(--teal); }
+/* The install methods differ in what they can and cannot do, and the choice
+   is not reversible once a drive has been written to, so each option carries
+   its explanation rather than relying on a name the reader has to decode. */
+.install-modes { display: flex; flex-direction: column; gap: 2px; }
+.install-mode { align-items: flex-start; margin: 6px 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--cream); }
+.install-mode input { margin-top: 2px; flex: 0 0 auto; }
+.install-mode span { display: flex; flex-direction: column; gap: 3px; }
+.install-mode b { color: var(--ink); font-size: 11px; }
+.install-mode small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.install-mode:has(input:checked) { border-color: var(--focus-ring); background: var(--paper); }
+.staged-title-list { display: flex; flex-direction: column; gap: 7px; max-height: 340px; overflow-y: auto; }
+.staged-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--cream); }
+.staged-title > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.staged-title b { color: var(--ink); font-size: 11px; }
+.staged-title small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.staged-title .staged-conflict { color: var(--ink); }
+.staged-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .file-row.empty-slot { color: var(--empty-text); }
 .file-row.empty-slot .file-icon { background: var(--empty-icon); color: var(--empty-icon-text); border: 1px dashed var(--input-border); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

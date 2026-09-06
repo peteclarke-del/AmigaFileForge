@@ -39,7 +39,12 @@ from ..deployment_service import (
     build_deployment_archive,
     deployment_plan,
 )
-from ..emulator_config import configured_emulator, emulator_command, emulator_status
+from ..emulator_config import (
+    MAXIMUM_FLOPPY_DRIVES,
+    configured_emulator,
+    emulator_command,
+    emulator_status,
+)
 from ..emulator_evidence import EmulatorEvidenceError, capture_emulator_evidence
 from ..hardware_profiles import normalise_hardware_profile
 from ..image_diff import compare_images, manifest_fingerprint
@@ -161,7 +166,14 @@ class InteractiveEmulator:
         with self.lock:
             self._stop_locked()
 
-    def start(self, media_context, *, debug: bool):
+    def start(self, media_context, *, debug: bool, floppies: list | None = None):
+        """Run one emulator session, optionally with discs already inserted.
+
+        ``floppies`` is what makes installing a title possible: the machine
+        boots the hard drive with the disc in DF0:, which is the state every
+        Amiga installer expects and cannot be reached by handing it the disc
+        alone.
+        """
         with self.lock:
             self._stop_locked()
             launch, media = media_context.__enter__()
@@ -172,6 +184,7 @@ class InteractiveEmulator:
                     debug=debug,
                     interactive=True,
                     native=self.native,
+                    floppies=floppies,
                 )
                 if not self.native:
                     self.xvfb = subprocess.Popen(
@@ -1107,6 +1120,64 @@ def create_tools_blueprint(
         service.get(image_id)
         interactive_emulator.stop()
         return jsonify(stopped=True)
+
+    @blueprint.post("/api/images/<image_id>/install/emulator")
+    @request_effect("external", "booting a drive with a disc to run its own installer")
+    def install_under_emulation(image_id):
+        """Boot this hard drive with a title's discs already in the drives.
+
+        Some software can only be installed by its own installer: it asks
+        which drawer, which language, which screen mode, and no tool can
+        answer those for somebody else. So this mode stops trying. It puts the
+        machine in the state the installer needs and hands the operator the
+        keyboard.
+
+        The drive is handed over as a whole-drive image, the same way a
+        hard-drive launch already works, so the installer sees the partitions
+        and the Workbench the operator actually built.
+        """
+        session = service.get(image_id)
+        if session.kind != "hdf" and not service.summary(session).get("hardDisk"):
+            raise DiskError("Running an installer needs a hard-drive image to install onto.")
+        data = payload()
+        configured = requested_emulator_session(session, data)
+        discs = [service.get(str(item)) for item in (data.get("discs") or [])]
+        if not discs:
+            raise DiskError("Choose at least one disc for the installer to read.")
+        if len(discs) > MAXIMUM_FLOPPY_DRIVES:
+            raise DiskError(
+                f"An Amiga has {MAXIMUM_FLOPPY_DRIVES} floppy drives. "
+                f"Insert up to {MAXIMUM_FLOPPY_DRIVES} discs and swap the rest as the installer asks."
+            )
+        launch = copy(configured)
+        launch.hardware_profile = dict(configured.hardware_profile or {})
+        # The installer is on the hard drive's Workbench, not on the disc, so
+        # the machine must boot the drive rather than the disc in DF0:.
+        launch.hardware_profile["emulatorBoot"] = "boot"
+        try:
+            arguments, started = interactive_emulator.start(
+                whole_drive_media(session, launch),
+                debug=False,
+                floppies=[disc.path for disc in discs],
+            )
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            raise DiskError(f"The emulator could not start: {exc}") from exc
+        emulator = configured_emulator(started)
+        return jsonify(result={
+            "time": datetime.now(timezone.utc).isoformat(),
+            "command": arguments[0],
+            "interactive": True,
+            "emulator": emulator.label,
+            "machine": str(started.hardware_profile.get("machine") or ""),
+            "discs": [disc.name for disc in discs],
+            "summary": (
+                f"{emulator.label} is running with {len(discs)} disc"
+                f"{'' if len(discs) == 1 else 's'} inserted. "
+                "Run the title's installer from the Workbench and point it at this drive."
+            ),
+            "displayMode": "native" if runtime.kind == "desktop" else "browser",
+            **({} if runtime.kind == "desktop" else {"viewerPort": 8668}),
+        })
 
     @blueprint.get("/api/images/<image_id>/editor-assembler")
     def editor_assembler_status(image_id):

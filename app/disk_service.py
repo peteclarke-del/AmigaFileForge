@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import BinaryIO, Callable
 
 from .ffs_install_service import FFSInstallMixin
+from .install_service import InstallMixin
 from .hardfile_geometry import (
     BLOCK_SIZE as HARDFILE_SECTOR_SIZE,
     MAX_SIZE as HARDFILE_MAX_SIZE,
@@ -97,6 +98,7 @@ class DiskService(
     SessionDiskMixin,
     FilesystemDiskMixin,
     FFSInstallMixin,
+    InstallMixin,
     RdbPartitionMixin,
     RomDiskMixin,
     DMSDiskMixin,

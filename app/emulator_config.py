@@ -107,6 +107,10 @@ FLOPPY_SUFFIXES = {".adf", ".adz", ".dms", ".ipf", ".hfe", ".dsk"}
 DRIVE_SUFFIXES = {".hdf", ".hda", ".hdz", ".img", ".raw", ".rdsk"}
 
 
+#: DF0: to DF3:. The hardware has four, and FS-UAE exposes exactly those.
+MAXIMUM_FLOPPY_DRIVES = 4
+
+
 def kickstart_for(machine: str) -> Path | None:
     """Return the user-supplied Kickstart this machine would boot from."""
     for name in KICKSTART_NAMES.get(machine, ()):
@@ -195,7 +199,16 @@ def emulator_command(
     debug: bool = False,
     interactive: bool = False,
     native: bool = False,
+    floppies: list[str | Path] | None = None,
 ) -> tuple[list[str], str]:
+    """Build the command line that boots one image, optionally with discs.
+
+    ``floppies`` exists for installing a title onto a drive: the machine boots
+    from the hard drive and the title's disc is already in DF0:, which is what
+    every Amiga installer expects to find. A multi-disc set fills DF1: and
+    upwards so a disc swap is a menu choice rather than a restart, up to the
+    four drives the hardware has.
+    """
     emulator = configured_emulator(session)
     if not emulator.available:
         raise ValueError(f"{emulator.label} is not installed in this build.")
@@ -230,11 +243,19 @@ def emulator_command(
             arguments.append("--fast_memory=8192")
         if "slow-ram" in addons:
             arguments.append("--slow_memory=512")
+        attached = [Path(item) for item in (floppies or [])]
         if suffix in DRIVE_SUFFIXES:
             arguments.append(f"--hard_drive_0={media}")
         else:
-            arguments.append(f"--floppy_drive_0={media}")
-            arguments.append(f"--floppy_image_0={media}")
+            attached.insert(0, media)
+        if len(attached) > MAXIMUM_FLOPPY_DRIVES:
+            raise ValueError(
+                f"An Amiga has {MAXIMUM_FLOPPY_DRIVES} floppy drives; "
+                f"{len(attached)} discs were attached."
+            )
+        for index, disc in enumerate(attached):
+            arguments.append(f"--floppy_drive_{index}={disc}")
+            arguments.append(f"--floppy_image_{index}={disc}")
         if boot in {"auto", "boot"}:
             arguments.append("--automatic_input_grab=0")
         if debug:
