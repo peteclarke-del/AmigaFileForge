@@ -19,10 +19,9 @@ project documentation. An unchecked item remains in scope.
       including the Raspberry Pi package-name and Capstone fixes.
 - [ ] Run and retain the complete AMD64, ARM64 and ARMv7 clean-build matrix for
       the release candidate.
-- [x] Run the generated-media and fault-injection gates for the candidate and
-      retain the AMD64 evidence in `docs/release-evidence/`. RC1 and current
-      RC2 records are retained separately so the historical result remains
-      auditable.
+- [x] Run the generated-media and fault-injection gates for the candidate.
+      Both run in CI on every commit, inside the application image, so the
+      evidence is the run attached to the released commit.
 - [ ] Complete the real-hardware gate for the affected Amiga, Amiga 600,
       Hardfile, FastFileSystem and AmigaOS workflows.
 - [ ] Choose the release version, update `VERSION`, create the signed or

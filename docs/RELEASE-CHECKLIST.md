@@ -7,10 +7,16 @@ gate must be reproducible from a clean checkout without anything in `samples/`.
 Return to the [documentation index](README.md) for the operator and technical
 handbooks validated by this gate.
 
-Retained local evidence is stored under `docs/release-evidence/`. The
-[17 August 2026 AMD64 RC2 record](release-evidence/2026-08-17-amd64-rc2.md)
-covers the current complete automated and browser suites. It does not satisfy
-the independent ARM64, ARMv7 or physical-hardware rows below.
+The evidence for the automated rows below is the CI run on the commit being
+released. Every push runs the complete Python suite inside the application
+image, the JavaScript unit tests, the six browser regressions against a live
+container, the amd64, arm64 and ARMv7 image builds, and the Debian 13 and
+Ubuntu 24.04 native packages for all three architectures. Link that run from
+the release notes; it is reproducible and tied to the exact commit, which a
+transcribed local record is not.
+
+CI does not satisfy the physical-hardware rows. Those still need a real
+machine, and no automated result should be read as covering them.
 
 Record the intended version before starting:
 

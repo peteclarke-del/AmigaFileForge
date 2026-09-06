@@ -29,7 +29,7 @@ that match the running frontend.
 | Report a vulnerability | [Security policy](../SECURITY.md) |
 | Check dependency, emulator and firmware licence boundaries | [Third-party notices](../THIRD_PARTY_NOTICES.md) |
 | Ask for support or report conduct concerns | [Support](../SUPPORT.md) and [code of conduct](../CODE_OF_CONDUCT.md) |
-| Review retained validation evidence | [AMD64 RC2 evidence](release-evidence/2026-08-17-amd64-rc2.md) |
+| Review validation evidence | The CI run on the released commit; see the [release checklist](RELEASE-CHECKLIST.md) |
 | Review completed and outstanding product improvements | [Product backlog](BACKLOG.md) |
 | Audit the emulator firmware shipped in the image | [Firmware notes](../firmware/README.md) |
 | Review the Amiganut AmigaDOS integration and format limits | [Amiganut AmigaDOS support](AMIGANUT-AMIGADOS-SUPPORT.md) |
