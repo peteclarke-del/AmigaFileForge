@@ -39,6 +39,17 @@ _REFERENCE_SOURCES = json.loads(
 )
 
 
+def _operation(mnemonic: object) -> str:
+    """Return an instruction's operation without its size suffix.
+
+    Every 68000 mnemonic that matters here carries one: the decrement is
+    ``SUBQ.B``, the store is ``MOVE.W``, the branch is ``BEQ.B``. Comparing
+    the whole string against a set of bare operations never matches, which
+    left this analysis silent on Amiga code entirely.
+    """
+    return str(mnemonic or "").upper().split(".", 1)[0]
+
+
 def _category(value: str, fallback: str = "counter") -> str:
     folded = str(value or "").casefold()
     if re.search(r"\bgame[\s_-]*over\b", folded):
@@ -207,7 +218,7 @@ def _initialised_targets(rows: list[dict]) -> dict[str, list[tuple[int, int]]]:
     stores = {"STA", "STX", "STY", "STR", "STRB", "MOVE", "MOVE.B", "MOVE.W", "MOVE.L"}
     result: dict[str, list[tuple[int, int]]] = {}
     for index, row in enumerate(rows):
-        if str(row.get("mnemonic") or "").upper() not in stores:
+        if _operation(row.get("mnemonic")) not in stores:
             continue
         target = _operand_address(str(row.get("operand") or ""))
         if not target or _is_hardware_address(target):
@@ -215,11 +226,11 @@ def _initialised_targets(rows: list[dict]) -> dict[str, list[tuple[int, int]]]:
         preceding = rows[max(0, index - 3):index]
         control_flow = {"BEQ", "BNE", "BPL", "BMI", "BCC", "BCS", "BVC", "BVS", "BHI", "BLS", "BLE", "BLT", "BGE", "BGT", "JMP", "JSR", "RTS", "BRA", "BL", "BX", "BRK"}
         barrier = next((position for position, item in reversed(list(enumerate(preceding)))
-                        if str(item.get("mnemonic") or "").upper() in control_flow), None)
+                        if _operation(item.get("mnemonic")) in control_flow), None)
         if barrier is not None:
             preceding = preceding[barrier + 1:]
         loaded = next((item for item in reversed(preceding)
-                       if str(item.get("mnemonic") or "").upper() in loads
+                       if _operation(item.get("mnemonic")) in loads
                        and _small_immediate(str(item.get("operand") or "")) is not None), None)
         if loaded is None:
             continue
@@ -265,18 +276,18 @@ def analyse_disassembly(report: dict) -> list[dict]:
     findings: list[dict] = []
     decrement = {"DEC", "DEA", "SBC", "SUB", "SUBQ", "SUBS"}
     comparison = {"CMP", "CMN", "TST", "BIT"}
-    stores = {"STA", "STZ", "STR", "STRB", "MOVE", "MOVE.B", "MOVE.W", "MOVE.L"}
+    stores = {"STA", "STZ", "STR", "STRB", "MOVE", "MOVEQ"}
     branches = {"BEQ", "BNE", "BPL", "BMI", "BCC", "BCS", "BVC", "BVS", "BHI", "BLS", "BLE", "BLT", "BGE", "BGT", "CBZ", "CBNZ"}
     initialised = _initialised_targets(rows)
     for index, row in enumerate(rows):
-        mnemonic = str(row.get("mnemonic") or "").upper()
+        mnemonic = _operation(row.get("mnemonic"))
         operand = str(row.get("operand") or "")
         context = " ".join(str(row.get(key) or "") for key in ("label", "comment", "operand"))
         category = _category(context, "counter")
         address = int(row.get("address") or 0)
         location = f"&{address:X}"
         following = rows[index + 1:index + 4]
-        nearby_branch = next((item for item in following if str(item.get("mnemonic") or "").upper() in branches), None)
+        nearby_branch = next((item for item in following if _operation(item.get("mnemonic")) in branches), None)
         target = _operand_address(operand)
         branch_destination = _branch_destination(nearby_branch)
         backward_branch = branch_destination is not None and branch_destination <= address
@@ -335,12 +346,12 @@ def analyse_disassembly(report: dict) -> list[dict]:
         if mnemonic in {"SBC", "SUB", "SUBQ", "SUBS"} and _small_immediate(operand) == 1:
             before = rows[max(0, index - 4):index]
             after = rows[index + 1:index + 5]
-            loaded = next((item for item in reversed(before) if str(item.get("mnemonic") or "").upper() in {"LDA", "LDR", "LDRB", "MOVE", "MOVE.B", "MOVE.W", "MOVE.L"} and _operand_address(str(item.get("operand") or ""))), None)
-            stored = next((item for item in after if str(item.get("mnemonic") or "").upper() in stores and _operand_address(str(item.get("operand") or ""))), None)
+            loaded = next((item for item in reversed(before) if _operation(item.get("mnemonic")) in {"LDA", "LDR", "LDRB", "MOVE"} and _operand_address(str(item.get("operand") or ""))), None)
+            stored = next((item for item in after if _operation(item.get("mnemonic")) in stores and _operand_address(str(item.get("operand") or ""))), None)
             loaded_target = _operand_address(str((loaded or {}).get("operand") or ""))
             stored_target = _operand_address(str((stored or {}).get("operand") or ""))
             if loaded_target and stored_target and loaded_target == stored_target and not _is_hardware_address(stored_target):
-                branch = next((item for item in after if str(item.get("mnemonic") or "").upper() in branches), None)
+                branch = next((item for item in after if _operation(item.get("mnemonic")) in branches), None)
                 sequence_context = " ".join(str(item.get(key) or "") for item in before + after for key in ("label", "comment"))
                 sequence_category = _category(f"{context} {sequence_context}", "counter")
                 destination = _branch_destination(branch)
@@ -363,9 +374,9 @@ def analyse_disassembly(report: dict) -> list[dict]:
                 ))
         if mnemonic in comparison and _small_immediate(operand) in {0, 1}:
             before = rows[max(0, index - 3):index]
-            loaded = next((item for item in reversed(before) if str(item.get("mnemonic") or "").upper() in {"LDA", "LDR", "LDRB", "MOVE", "MOVE.B", "MOVE.W", "MOVE.L"} and _operand_address(str(item.get("operand") or ""))), None)
+            loaded = next((item for item in reversed(before) if _operation(item.get("mnemonic")) in {"LDA", "LDR", "LDRB", "MOVE"} and _operand_address(str(item.get("operand") or ""))), None)
             loaded_target = _operand_address(str((loaded or {}).get("operand") or ""))
-            branch = next((item for item in following if str(item.get("mnemonic") or "").upper() in branches), None)
+            branch = next((item for item in following if _operation(item.get("mnemonic")) in branches), None)
             test_category = _category(f"{context} {_branch_context(rows, branch)}", "")
             if loaded_target and branch and not _is_hardware_address(loaded_target) and test_category:
                 findings.append(_candidate(

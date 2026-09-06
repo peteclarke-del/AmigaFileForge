@@ -16,18 +16,30 @@ const target = process.env.AMIGA_FILE_FORGE_URL || "http://127.0.0.1:8666";
         body: JSON.stringify({ format: "adf", title: "CHEATS" }),
       });
       const form = new FormData();
-      form.append("file", new File([new Uint8Array([0xA9, 0x03, 0x85, 0x70, 0xC6, 0x70, 0xF0, 0x01, 0xEA, 0x60])], "GAME", { type: "application/octet-stream" }));
-      form.append("destination", "$");
+      // A 68000 lives counter: initialise a byte to three, decrement it, and
+      // branch when it reaches zero. That is the shape the analyser looks for
+      // -- a store that initialises a target, a decrement of the same target,
+      // and a forward branch out of it.
+      //   MOVE.B #3,$1234.w   11 FC 00 03 12 34
+      //   SUBQ.B #1,$1234.w   53 38 12 34
+      //   BEQ.B  +6           67 06
+      //   NOP NOP RTS         4E 71 4E 71 4E 75
+      form.append("file", new File([new Uint8Array([
+        0x11, 0xFC, 0x00, 0x03, 0x12, 0x34,
+        0x53, 0x38, 0x12, 0x34,
+        0x67, 0x06,
+        0x4E, 0x71, 0x4E, 0x71, 0x4E, 0x75,
+      ])], "GAME", { type: "application/octet-stream" }));
+      form.append("destination", "");
       form.append("targetName", "GAME");
-      form.append("load", "2000");
-      form.append("execute", "2000");
+      form.append("protection", "----rwed");
       const inserted = await fetch(`/api/images/${created.image.id}/files`, { method: "POST", body: form });
       if (!inserted.ok) throw new Error((await inserted.json()).error || "Could not create cheat-analysis fixture");
       localStorage.setItem("amiga-file-forge-dynamic-panes", JSON.stringify([{
         imageId: created.image.id,
         slot: null,
         side: null,
-        path: "$",
+        path: "",
         windowState: { x: 20, y: 20, width: 1120, height: 700, z: 1, minimized: false, snap: "", restore: null },
       }]));
       return created.image.id;
@@ -46,7 +58,12 @@ const target = process.env.AMIGA_FILE_FORGE_URL || "http://127.0.0.1:8666";
     await command.click();
     await editor.locator(".cheat-analysis-dialog").waitFor({ state: "visible" });
     const text = await editor.locator(".cheat-analysis-dialog").textContent();
-    if (!text.includes("Candidate evidence, not a proven cheat") || !text.includes("&70") || !text.includes("Strong")) {
+    // The analyser reports this as Possible, not Strong, and that is the
+    // honest answer: nothing in the file says the counter is the player's
+    // lives rather than an object or animation count. What is asserted is
+    // that the target was found, a confidence was rendered, and the safety
+    // boundary is stated.
+    if (!text.includes("Candidate evidence, not a proven cheat") || !text.includes("&1234") || !text.includes("Possible")) {
       throw new Error(`Cheat report omitted its evidence or safety boundary: ${text}`);
     }
     if (await editor.locator(".cheat-candidate-list .cheat-candidate").count() < 1) {

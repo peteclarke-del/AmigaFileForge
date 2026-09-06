@@ -107,7 +107,7 @@ jobs:
               stage=$(mktemp -d)
               dpkg-deb --extract "$package" "$stage"
               cd "$stage/opt/amiga-file-forge"
-              PYTHONPATH="$stage/opt/amiga-file-forge/vendor:$stage/opt/amiga-file-forge" python3 -c "import flask; import amiganut.ffs; import amiganut.kickfs; from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_M68K, Cs; Cs(CS_ARCH_ARM, 0); Cs(CS_ARCH_M68K, 0); Cs(CS_ARCH_M68K, 0); from app.server import create_app; print(\"Package runtime gate passed\")"
+              PYTHONPATH="$stage/opt/amiga-file-forge/vendor:$stage/opt/amiga-file-forge" python3 -c "import flask; import amiganut.filesystem; import amiganut.kickfs; from capstone import CS_ARCH_M68K, CS_MODE_M68K_000, Cs; Cs(CS_ARCH_M68K, CS_MODE_M68K_000); from app.server import create_app; print(\"Package runtime gate passed\")"
               LD_LIBRARY_PATH="$stage/opt/amiga-file-forge/native/lib" "$stage/opt/amiga-file-forge/native/bin/hxcfe" -help >/dev/null
               rm -rf "$stage"
             '
