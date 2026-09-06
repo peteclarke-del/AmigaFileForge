@@ -181,7 +181,7 @@ def build_manifest(service, session, progress=None) -> dict:
             path = f"bank:{row['bank']}"
             if progress:
                 progress(f"Checksumming ROM {path}", index, len(banks))
-            exported = service.export_file(session, None, path)
+            exported = service.export_file(session, path)
             try:
                 digest = sha256_path(
                     exported,
@@ -234,7 +234,7 @@ def build_manifest(service, session, progress=None) -> dict:
                 }
                 if record["recordType"] == "file":
                     try:
-                        exported = service.export_file(session, None, path, side)
+                        exported = service.export_file(session, path, side)
                         try:
                             record["sha256"] = sha256_path(
                                 exported,
