@@ -135,8 +135,30 @@ jobs:
           path: release
           merge-multiple: true
 
+      - name: Name the assets as GitHub will publish them
+        # GitHub replaces every character outside [A-Za-z0-9._-] in an uploaded
+        # asset name, so the Debian tilde in 1.1.1-1~ubuntu24.04 arrives on the
+        # release page as a dot. Renaming before the checksums are taken means
+        # SHA256SUMS names the file a person actually downloads, and
+        # "sha256sum -c SHA256SUMS" verifies it instead of reporting it
+        # missing. The package's own Version field keeps its tilde; only the
+        # filename changes.
+        run: |
+          cd release
+          for file in *'~'*; do
+            [ -e "$file" ] || continue
+            mv -- "$file" "$(printf '%s' "$file" | tr '~' '.')"
+          done
+
       - name: Create checksums
-        run: cd release && sha256sum ./* | sort --key=2 > SHA256SUMS
+        # The redirect creates SHA256SUMS before a bare glob is expanded, so
+        # listing the patterns explicitly is what keeps the file from hashing
+        # itself. Names are recorded bare, as they are downloaded.
+        run: |
+          cd release
+          sha256sum -- *.tar.gz *.deb | sort --key=2 > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
+          cat SHA256SUMS
 
       - name: Publish release
         env:
