@@ -73,7 +73,7 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./amiga-file-forge_1.1.1-1~deb13_amd64.deb
+sudo apt install ./amiga-file-forge_1.2.0-1~deb13_amd64.deb
 amiga-file-forge
 ```
 
@@ -137,7 +137,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current release is `1.1.1`. It provides the editing and transfer workflows
+The current release is `1.2.0`. It provides the editing and transfer workflows
 described in this guide, including movable, resizable and stackable panes, undo
 and named checkpoints, owner-isolated recovery, background job tracking,
 Rigid Disk Block partition maintenance, HFE handling, an Online Library
@@ -161,6 +161,13 @@ one bundled emulator, chosen because it covers the whole Amiga range in a single
 portable build. Proven cheat findings are packaged as exact-hash guarded
 patches.
 
+A floppy can be installed onto a hard drive rather than only copied there, by
+staging a multi-disc set into one tree, by installing WHDLoad, or by booting the
+drive under emulation with the disc in `DF0:` so the title's own installer can
+be run. LHA archives are read in-tree, without an external decompressor.
+[docs/INSTALL-GUIDE.md](docs/INSTALL-GUIDE.md) covers all three methods and is
+explicit about which parts cannot be automated.
+
 ### Known limits of this build
 
 These are stated here rather than discovered later:
@@ -173,6 +180,11 @@ These are stated here rather than discovered later:
   decoders are pinned byte-for-byte to the public-domain xDMS 1.3 reference.
 - **Long-filename and third-party filing systems.** `DOS\6`, `DOS\7`, `PFS\3`,
   `SFS\0` and `SFS\2` are identified and reported, but opened read-only.
+- **WHDLoad slaves.** WHDLoad itself is installed for you from its author's
+  site. The per-title slave is not, and cannot be: `whdload.de` refuses its
+  game index to anything that is not a browser session, and Aminet carries no
+  slaves. Supply one yourself, bare or still inside its archive; an install
+  without one is reported as incomplete rather than presented as finished.
 - **IPF images.** Read when the SPS decoder library (`libcapsimage`) is
   installed, and refused with a plain explanation when it is not. That library
   is source-available under a non-commercial licence, so it is not bundled;
@@ -2580,7 +2592,7 @@ curl http://localhost:8674/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"amiganut","status":"ok","version":"1.1.1"}
+{"engine":"amiganut","status":"ok","version":"1.2.0"}
 ```
 
 ## Main dependencies
