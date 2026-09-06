@@ -178,13 +178,24 @@ These are stated here rather than discovered later:
   workbench looks for it, and what an IPF can and cannot become.
 - **Firmware.** No Kickstart ROM is shipped or downloaded. The emulator
   hand-off needs one you supply.
-- **Online Library sources.** The shipped source list names real Amiga
-  archives (Aminet, WHDLoad, Hall of Light, Lemon Amiga, itch.io and OS4Depot),
-  but their page parsers have not been run against the live sites from this
-  build. Treat a source that returns nothing as unconfigured rather than
-  broken, and correct its options in **Library → Sources**. Every Game Going
+- **Online Library sources.** Every source has been run against the live site.
+  Aminet, OS4Depot and itch.io search and download; an Aminet and an OS4Depot
+  archive were both fetched whole and checked for a valid LHA header. Lemon
+  Amiga searches and is parsed correctly, but it is a reference database of
+  titles, publishers and years with no downloadable media, so it contributes
+  metadata and the duplicate check rather than installable results.
+
+  Two are disabled because they cannot be reached, not because their parsers
+  are wrong. Hall of Light now sits behind an Anubis proof-of-work bot check
+  that answers an ordinary HTTP client with a challenge page. whdload.de
+  returns 403 for `/games/` to every client tried, browser user agents
+  included, while the rest of that site answers normally. Every Game Going
   ships disabled because its Amiga machine identifiers have to be read from
   the site before a search can be sent to the right catalogue.
+
+  A source that returns nothing is worth checking in **Library → Sources**
+  before assuming it is broken: an archive can change its search form, and
+  the shipped options describe the form as it was.
 - **HFE creation.** Creating or converting an HFE needs the HxC converter,
   which the Docker image builds. A bare checkout reports it as unavailable
   rather than writing an unverified image.
