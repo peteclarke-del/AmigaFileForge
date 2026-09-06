@@ -8,6 +8,13 @@
 /dist/
 /release/
 
+# Firmware you supply. Kickstart ROMs, Workbench disks and the CD32 and CDTV
+# extended ROMs are the copyright of their owners and are not redistributable,
+# so nothing here is ever committed. The directory's own README is, because it
+# explains what belongs here and where else the application will look.
+/firmware/*
+!/firmware/README.md
+
 # Amiga File Forge working data belongs in Docker's named volume.
 /work/
 
