@@ -15,6 +15,7 @@ from .routes.hex_editor import create_hex_editor_blueprint
 from .routes.catalog import create_catalog_blueprint
 from .routes.desktop import create_desktop_blueprint
 from .routes.images import create_images_blueprint
+from .routes.install import create_install_blueprint
 from .routes.tools import InteractiveEmulator, create_tools_blueprint
 from .routes.rom_tools import create_rom_tools_blueprint
 from .routes.effects import mutation_for
@@ -141,6 +142,7 @@ def create_app(
         )
     )
     application.register_blueprint(create_rom_tools_blueprint(service, ROOT))
+    application.register_blueprint(create_install_blueprint(service, operations))
     if runtime.kind == "desktop":
         state_path = Path(desktop_state_path) if desktop_state_path else active_work_dir / "client-state.json"
         application.register_blueprint(

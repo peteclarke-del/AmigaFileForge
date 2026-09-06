@@ -804,6 +804,7 @@ function renderPane(index, preserveScroll = false) {
       <button class="menu-command build-deployment"><b>⇩</b><span>Build hardware deployment…</span></button>
       ${isPartitionIndex ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
       ${isFfsHdd ? '<button class="menu-command audit-ffs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
+      <button class="menu-command staged-installations"><b>▤</b><span>Staged installations…</span></button>
       ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isKickfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-kickfs"><b>▥</b><span>Kickstart ROM properties…</span></button>'}` : isPartitionIndex || isDMS ? (isDMS ? '<button class="menu-command dms-project"><b>≋</b><span>DMS archive project…</span></button><button class="menu-command convert-dms"><b>⇥</b><span>Convert archive to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
     </div>
   </details>`;
@@ -889,6 +890,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".collection-catalogue")?.addEventListener("click", () => showCollectionCatalogue(index));
   host.querySelector(".validate-image")?.addEventListener("click", () => guardedPaneAction(index, () => validateImage(index)));
   host.querySelector(".audit-ffs-installations")?.addEventListener("click", () => guardedPaneAction(index, () => showFfsInstallationAudit(index)));
+  host.querySelector(".staged-installations")?.addEventListener("click", () => guardedPaneAction(index, () => showStagedInstallations(index)));
   host.querySelector(".open-hex-editor")?.addEventListener("click", () => guardedPaneAction(index, () => openHexEditor(index)));
   host.querySelector(".run-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, false)));
   host.querySelector(".debug-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, true)));
@@ -1270,8 +1272,10 @@ async function copyDiskImageToFfs(index, source) {
     preview,
     suggestedName: rule.suggested,
     allowRaw: false,
+    allowInstall: paneAcceptsInstall(target),
     submitLabel: "Copy image contents",
     onExtract: plan => performDiskImageToFfsCopy(index, source, plan),
+    onInstall: plan => performInstall(index, source.image, source.name, plan),
   });
 }
 
@@ -3078,6 +3082,7 @@ async function promptImageExtraction(index, file, batch = null) {
       preview,
       suggestedName: rule.suggested,
       allowRaw: true,
+      allowInstall: paneAcceptsInstall(pane),
       batch,
       submitLabel: "Continue",
       onRaw: async choice => {
@@ -3091,6 +3096,12 @@ async function promptImageExtraction(index, file, batch = null) {
           return addHostFileWithPlan(index, file, { targetName: targetNameRule(pane, file.name).suggested });
         }
         setTimeout(() => importHostFile(index, file, true, batch), 0);
+      },
+      onInstall: async plan => {
+        const result = await performInstall(index, prepared.id, file.name, plan);
+        await api(`/api/images/${prepared.id}`, { method: "DELETE" });
+        sourceConsumed = true;
+        return result;
       },
       onExtract: async plan => {
         if (batch && plan.applyAll) {
@@ -3146,10 +3157,12 @@ function showImageExtractionPlan(index, options) {
     ${batchLabel}
     <p>Review the source, then choose where its contents should go. Extraction defaults to the directory currently shown in the pane.</p>
     ${extractionPreviewMarkup(options.preview)}
-    ${options.allowRaw ? `<div class="field"><label>Import as</label><select name="storageMethod">
-      <option value="extract">Extract the image contents</option>
-      <option value="raw">Store the original image as an ordinary file</option>
+    ${options.allowRaw || options.allowInstall ? `<div class="field"><label>Import as</label><select name="storageMethod">
+      <option value="extract">Copy the disc contents in as they are</option>
+      ${options.allowInstall ? '<option value="install">Install it onto this drive</option>' : ""}
+      ${options.allowRaw ? '<option value="raw">Store the original image as an ordinary file</option>' : ""}
     </select></div>` : '<input type="hidden" name="storageMethod" value="extract">'}
+    ${options.allowInstall ? installPlanMarkup(options) : ""}
     <div data-extraction-options>
       <div class="selected-destination"><small>DESTINATION</small><code data-selected-destination>${esc(pane.path)}</code></div>
       <label class="check-field"><input type="checkbox" name="pickDestination" value="yes"> Choose a different existing directory</label>
@@ -3168,6 +3181,18 @@ function showImageExtractionPlan(index, options) {
   async form => {
     const applyAll = form.get("applyRemaining") === "yes";
     if (form.get("storageMethod") === "raw") return options.onRaw?.({ applyAll });
+    if (form.get("storageMethod") === "install") {
+      return options.onInstall({
+        mode: form.get("installMode") || "stage",
+        title: (form.get("installTitle") || options.suggestedName || "").trim(),
+        discLabel: (form.get("discLabel") || "").trim(),
+        parent: (form.get("installParent") || "").trim(),
+        whdloadPresent: modalContent.querySelector("[data-install-options]")?.dataset.whdloadInstalled === "yes",
+        reinstallWhdload: form.get("reinstallWhdload") === "yes",
+        installNow: form.get("installNow") === "yes",
+        applyAll,
+      });
+    }
     return options.onExtract({
       targetPath: form.get("pickDestination") === "yes" ? form.get("targetPath") : pane.path,
       createDirectory: form.get("createDirectory") === "yes",
@@ -3175,14 +3200,14 @@ function showImageExtractionPlan(index, options) {
       applyAll,
     });
   });
-  bindImageExtractionPlan(index, Boolean(options.allowRaw));
+  bindImageExtractionPlan(index, Boolean(options.allowRaw), options);
   modalContent.querySelector(".apply-import-all")?.addEventListener("click", () => {
     modalContent.querySelector('[name="applyRemaining"]').value = "yes";
   });
   return closed;
 }
 
-function bindImageExtractionPlan(index, allowRaw) {
+function bindImageExtractionPlan(index, allowRaw, options = {}) {
   const pane = panes[index];
   const storageMethod = modalContent.querySelector('select[name="storageMethod"]');
   const extractionOptions = modalContent.querySelector("[data-extraction-options]");
@@ -3231,12 +3256,246 @@ function bindImageExtractionPlan(index, allowRaw) {
   };
   modalContent.querySelector(".picker-up").onclick = () => loadPicker(parentOf(targetPath.value));
   createDirectory.onchange = showDirectory;
-  if (allowRaw && storageMethod) {
+  const installOptions = modalContent.querySelector("[data-install-options]");
+  if (storageMethod) {
     storageMethod.onchange = () => {
-      extractionOptions.hidden = storageMethod.value === "raw";
+      extractionOptions.hidden = storageMethod.value !== "extract";
+      if (installOptions) installOptions.hidden = storageMethod.value !== "install";
     };
   }
+  if (installOptions) bindInstallPlan(index, options);
   showDirectory();
+}
+
+//: The three honest ways a disc becomes something a hard drive runs. Staging
+//: leads because it is the only one that cannot half-succeed: it needs no
+//: emulator, no network and no per-title knowledge, and what it produces is
+//: finishable by hand either here or on the real machine.
+const INSTALL_MODES = [
+  {
+    value: "stage",
+    label: "Stage it for installing later",
+    detail: "Extracts the disc into a staging drawer. Add the rest of a multi-disc set to the same place, then install them together here or on a real Amiga.",
+  },
+  {
+    value: "whdload",
+    label: "Install with WHDLoad",
+    detail: "For games and demos. WHDLoad itself is installed from whdload.de if this drive does not have it. The per-title slave is not downloadable from anywhere, so add one yourself if you have it.",
+  },
+  {
+    value: "installer",
+    label: "Run the disc's own installer",
+    detail: "Boots this drive in the emulator with the disc in DF0:. Use it for productivity software, which asks questions no tool can answer for you.",
+  },
+];
+
+function installPlanMarkup(options) {
+  return `
+    <div data-install-options hidden>
+      <div class="field"><label>Title</label>
+        <input name="installTitle" maxlength="60" value="${esc(options.suggestedName || "")}">
+        <small class="muted">Discs staged under the same title are merged into one tree.</small></div>
+      <div class="field"><label>Disc</label>
+        <input name="discLabel" maxlength="30" placeholder="Disc 1"></div>
+      <div class="field"><label>Method</label>
+        <div class="install-modes">
+          ${INSTALL_MODES.map((mode, position) => `
+            <label class="check-field install-mode">
+              <input type="radio" name="installMode" value="${mode.value}"${position === 0 ? " checked" : ""}>
+              <span><b>${esc(mode.label)}</b><small>${esc(mode.detail)}</small></span>
+            </label>`).join("")}
+        </div></div>
+      <div data-install-whdload hidden>
+        <div class="help-note" data-whdload-state>Checking whether this drive already has WHDLoad…</div>
+        <label class="check-field" data-reinstall-whdload hidden>
+          <input type="checkbox" name="reinstallWhdload" value="yes"> Download and reinstall WHDLoad anyway
+        </label>
+        <div class="field"><label>Install into</label>
+          <input name="installParent" maxlength="60" value="Games"></div>
+      </div>
+      <label class="check-field" data-install-now hidden>
+        <input type="checkbox" name="installNow" value="yes" checked> Write it into the drive now, rather than only staging it
+      </label>
+    </div>`;
+}
+
+function bindInstallPlan(index, options) {
+  const pane = panes[index];
+  const installOptions = modalContent.querySelector("[data-install-options]");
+  const whdloadPanel = modalContent.querySelector("[data-install-whdload]");
+  const whdloadState = modalContent.querySelector("[data-whdload-state]");
+  const installNow = modalContent.querySelector("[data-install-now]");
+  const modes = [...modalContent.querySelectorAll('input[name="installMode"]')];
+  const chosen = () => modes.find(input => input.checked)?.value || "stage";
+
+  const refresh = () => {
+    const mode = chosen();
+    whdloadPanel.hidden = mode !== "whdload";
+    // Staging always writes to the staging area and never to the drive, so
+    // the choice of writing now only makes sense for the other two.
+    installNow.hidden = mode === "installer";
+  };
+  modes.forEach(input => input.addEventListener("change", refresh));
+  refresh();
+
+  const reinstall = modalContent.querySelector("[data-reinstall-whdload]");
+  const partition = pane.partition == null ? "" : `?partition=${pane.partition}`;
+  api(`/api/images/${pane.image.id}/install/whdload${partition}`)
+    .then(data => {
+      if (!modal.open) return;
+      const state = data.whdload || {};
+      // A drive that already has WHDLoad is left alone by default. Fetching a
+      // megabyte and a half to overwrite the same build is a cost with no
+      // result, so reinstalling is offered rather than assumed.
+      installOptions.dataset.whdloadInstalled = state.installed ? "yes" : "no";
+      reinstall.hidden = !state.installed;
+      whdloadState.textContent = state.installed
+        ? `This drive has WHDLoad ${state.version || "(version not recorded)"}, which will be left alone.`
+        : "This drive has no WHDLoad. It will be downloaded from whdload.de and installed.";
+    })
+    .catch(error => {
+      if (!modal.open) return;
+      whdloadState.textContent = `WHDLoad could not be checked on this drive: ${error.message}`;
+    });
+}
+
+async function showStagedInstallations(index) {
+  const pane = panes[index];
+  const data = await paneOperation(index, "Reading staged titles…", () => api("/api/install/staged"));
+  const titles = data.titles || [];
+  const installable = paneAcceptsInstall(pane);
+  const rows = titles.map(title => `
+    <div class="staged-title" data-slug="${esc(title.slug)}">
+      <div>
+        <b>${esc(title.title)}</b>
+        <small>${title.discCount} disc${title.discCount === 1 ? "" : "s"} · ${title.fileCount} file${title.fileCount === 1 ? "" : "s"} · ${humanSize(title.bytes)}</small>
+        <small>${esc(title.discs.map(disc => `${disc.label}: ${disc.volume}`).join(" · "))}</small>
+        ${title.conflicts.length ? `<small class="staged-conflict">${title.conflicts.length} file${title.conflicts.length === 1 ? "" : "s"} differed between discs; the first was kept and the rest are under alternates/</small>` : ""}
+      </div>
+      <div class="staged-actions">
+        ${installable ? '<button type="button" class="button primary staged-install">Install here</button>' : ""}
+        <button type="button" class="button ghost staged-discard">Discard</button>
+      </div>
+    </div>`).join("");
+
+  showModal(`
+    <h2>Staged installations</h2>
+    <p>Discs waiting to be installed. Stage every disc of a set under one title, then install it here or copy the staging drawer to a real Amiga and finish it there.</p>
+    <div class="selected-destination"><small>STAGING DIRECTORY</small><code>${esc(data.root || "")}</code></div>
+    ${installable
+      ? `<div class="help-note">Installing writes into <code>${esc(pane.partitionName ? `${pane.partitionName}:` : pane.image.name)}</code>, under the drawer named below.</div>
+         <div class="field"><label>Install into</label><input name="stagedParent" maxlength="60" value="Games"></div>`
+      : '<div class="help-note">Open a partition on a hard drive to install any of these. A floppy has nowhere to install to, and a partition table is not a volume.</div>'}
+    <div class="staged-title-list">${rows || '<p class="muted">Nothing is staged. Choose <strong>Install it onto this drive</strong> when you add a disc to a hard drive.</p>'}</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Close</button></div>`,
+  () => true);
+
+  modalContent.querySelectorAll(".staged-title").forEach(row => {
+    const slug = row.dataset.slug;
+    row.querySelector(".staged-install")?.addEventListener("click", async () => {
+      const parent = modalContent.querySelector('input[name="stagedParent"]')?.value.trim() || "";
+      modal.close();
+      const result = await trackedPaneOperation(index, "Installing a staged title…", operationId =>
+        api(`/api/images/${pane.image.id}/install/staged`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug, parent, partition: pane.partition, operationId }),
+        }));
+      pane.image = result.image;
+      await loadDirectory(index);
+      toast(`${result.title} installed into ${result.path}`);
+    });
+    row.querySelector(".staged-discard")?.addEventListener("click", async () => {
+      // Discarding throws away extracted discs, so it is confirmed rather
+      // than acted on from a single click. The original images are untouched,
+      // which is worth saying: it is the difference between an inconvenience
+      // and a loss.
+      if (!confirm(`Discard the staged discs for “${row.querySelector("b").textContent}”? The original images are untouched.`)) return;
+      await api(`/api/install/staged/${encodeURIComponent(slug)}`, { method: "DELETE" });
+      modal.close();
+      toast("Staged title discarded");
+      showStagedInstallations(index);
+    });
+  });
+}
+
+//: A pane can receive an install only when it is a volume on a hard drive.
+//: A floppy has nowhere to install to, and a partition table is not a volume.
+function paneAcceptsInstall(pane) {
+  if (!pane?.image || pane.image.readOnly) return false;
+  if (pane.image.kind === "hdf") return pane.partition !== null;
+  return Boolean(pane.image.hardDisk) && ["ffs", "ofs"].includes(pane.image.kind);
+}
+
+async function performInstall(index, sourceImageId, sourceName, plan) {
+  const pane = panes[index];
+  const title = plan.title || formats.stem(sourceName);
+
+  // Every mode stages first. It is the one step that always works, and it
+  // means an install that fails later has still preserved the disc's contents
+  // somewhere the operator can finish by hand.
+  const staged = await trackedPaneOperation(index, `Staging ${sourceName}…`, operationId =>
+    api("/api/install/stage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourceImage: sourceImageId,
+        sourcePartition: null,
+        title,
+        discLabel: plan.discLabel || null,
+        operationId,
+      }),
+    })).then(data => data.staged);
+
+  if (plan.mode === "installer") {
+    const result = await paneOperation(index, "Starting the emulator…", () =>
+      api(`/api/images/${pane.image.id}/install/emulator`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discs: [sourceImageId], partition: pane.partition }),
+      }));
+    toast(result.result.summary);
+    return staged;
+  }
+
+  if (plan.mode === "whdload" && (!plan.whdloadPresent || plan.reinstallWhdload)) {
+    const installed = await trackedPaneOperation(index, "Installing WHDLoad…", operationId =>
+      api(`/api/images/${pane.image.id}/install/whdload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ partition: pane.partition, operationId }),
+      }));
+    pane.image = installed.image;
+    const whdload = installed.whdload;
+    toast(whdload.upgraded && whdload.previousVersion
+      ? `${whdload.label} replaced WHDLoad ${whdload.previousVersion} in C:`
+      : `${whdload.label} is installed in C:`);
+  }
+
+  if (!plan.installNow) {
+    toast(`${title} staged as ${staged.discCount} disc(s). Install it when the set is complete.`);
+    await loadDirectory(index);
+    return staged;
+  }
+
+  const result = await trackedPaneOperation(index, `Installing ${title}…`, operationId =>
+    api(`/api/images/${pane.image.id}/install/staged`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slug: staged.slug,
+        parent: plan.mode === "whdload" ? (plan.parent || "Games") : "",
+        partition: pane.partition,
+        operationId,
+      }),
+    }));
+  pane.image = result.image;
+  await loadDirectory(index);
+  const missingSlave = plan.mode === "whdload"
+    ? " Add the title's .slave file to that drawer to finish it."
+    : "";
+  toast(`${title} installed into ${result.path}.${missingSlave}`);
+  return staged;
 }
 
 async function extractPreparedHostImage(index, sourceImage, sourceName, plan, batch = null) {
