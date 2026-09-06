@@ -9,6 +9,12 @@
  * of an A1200 desktop, lifted by Commodore blue and the Workbench orange used
  * for selection and alerts. Dark mode follows Workbench 1.3: the deep
  * #0055AA blue screen with white text and the same orange highlight.
+ *
+ * The four colours a real Workbench screen is built from are used as they
+ * were: #959595 for the chassis, #0055AA for title bars and every primary
+ * action, #FF8800 for the one thing selected, and near-black ink. Nothing
+ * else is allowed to use those two accents, which is what keeps a selected
+ * row and a title bar reading as themselves rather than as decoration.
  */
 
 :root {
@@ -23,14 +29,14 @@
   --yellow: #f5a300;
   --orange: #b34c00;
   --teal: #1a7a86;
-  --blue: #2c5fb5;
+  --blue: #0055aa;
   --line: #70768a;
   --shadow: 0 18px 50px rgba(12, 20, 44, .24);
 
   --body-background:
-    radial-gradient(circle at 82% 4%, rgba(44, 95, 181, .18), transparent 28rem),
-    linear-gradient(180deg, #9ea3b2 0, #c6cad5 28%, #eceef3 100%);
-  --html-background: #9ea3b2;
+    radial-gradient(circle at 82% 4%, rgba(0, 85, 170, .18), transparent 28rem),
+    linear-gradient(180deg, #959595 0, #c6cad5 28%, #eceef3 100%);
+  --html-background: #959595;
   --pane-background: rgba(242, 243, 246, .95);
   --toolbar-background: #e3e5ec;
   --header-background: #c9ccd4;
@@ -65,7 +71,7 @@
 
   --row-border: #c6cad5;
   --row-hover: #e2e6f0;
-  --row-selected: #ffa64d;
+  --row-selected: #ff8800;
   --table-heading: #d5d8e0;
   --table-heading-text: #5a6070;
   --empty-text: #6d7284;
