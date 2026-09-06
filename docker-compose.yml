@@ -3,9 +3,13 @@ services:
     build: .
     image: amiga-file-forge:latest
     container_name: amiga-file-forge
+    # The container still listens on 8666 and 8668. Only the host side moves,
+    # because 8666 and 8668 are commonly already taken -- the sibling Acorn
+    # File Forge uses exactly those, and the two are meant to run side by side.
+    # Override with AMIGA_FILE_FORGE_PORT and AMIGA_FILE_FORGE_VNC_PORT.
     ports:
-      - "8666:8666"
-      - "8668:8668"
+      - "${AMIGA_FILE_FORGE_PORT:-8674}:8666"
+      - "${AMIGA_FILE_FORGE_VNC_PORT:-8675}:8668"
     environment:
       AMIGA_FILE_FORGE_WORK_DIR: /app/work
       AMIGA_MAX_UPLOAD_GIB: "8"
