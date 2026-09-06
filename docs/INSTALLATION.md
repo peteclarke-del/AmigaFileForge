@@ -67,8 +67,10 @@ and release references.
 
 The normal installation exposes:
 
-- port `8666` for the application and API;
-- port `8668` for the managed emulator display over noVNC;
+- host port `8674` for the application and API, published from `8666` inside
+  the container;
+- host port `8675` for the managed emulator display over noVNC, published from
+  `8668` inside the container;
 - the named `amiga-file-forge-work` volume for private working sessions.
 
 Neither port should be exposed directly to an untrusted network. Amiga File
@@ -102,7 +104,7 @@ cd AmigaFileForge
 docker compose up --build -d
 ```
 
-Open <http://localhost:8666> after the service reports healthy.
+Open <http://localhost:8674> after the service reports healthy.
 
 ![Amiga File Forge ready for its first image](images/getting-started.png)
 
@@ -150,7 +152,7 @@ docker compose build --pull --progress=plain
 docker compose up -d
 ```
 
-Open `http://<pi-address>:8666` from a browser on the same trusted network.
+Open `http://<pi-address>:8674` from a browser on the same trusted network.
 
 The save and background-operation identifiers work on this plain-HTTP LAN URL.
 Browsers expose `crypto.randomUUID()` only in a secure context, which excludes
@@ -191,7 +193,7 @@ Check the service and API:
 
 ```bash
 docker compose ps
-curl http://localhost:8666/api/health
+curl http://localhost:8674/api/health
 docker compose logs --tail=100 amiga-file-forge
 ```
 
@@ -214,13 +216,17 @@ The Compose service defines these settings:
 | --- | --- | --- |
 | `AMIGA_FILE_FORGE_WORK_DIR` | `/app/work` | Working-session and job storage inside the container |
 | `AMIGA_MAX_UPLOAD_GIB` | `8` | Maximum accepted browser upload size in GiB |
-| Application port | `8666` | Web UI and JSON API |
-| Emulator display port | `8668` | noVNC display for managed emulators |
+| `AMIGA_FILE_FORGE_PORT` | `8674` | Host port for the web UI and JSON API |
+| `AMIGA_FILE_FORGE_VNC_PORT` | `8675` | Host port for the noVNC emulator display |
 
-To change a published host port, edit only the left side of the Compose mapping.
-For example, `127.0.0.1:9866:8666` keeps the service local and opens it at
-`http://localhost:9866`. The application continues to listen on `8666` inside
-the container.
+The container always listens on `8666` and `8668`; only the published host
+ports move. They default to `8674` and `8675` because `8666` and `8668` are
+frequently already in use -- the sibling Acorn File Forge publishes exactly
+those, and the two are meant to run side by side.
+
+Set either variable to move a port, or bind it to one interface by editing the
+left side of the Compose mapping directly: `127.0.0.1:9866:8666` keeps the
+service local and opens it at `http://localhost:9866`.
 
 Increasing the upload limit also increases the maximum temporary storage an
 operation may consume. It does not enlarge a filesystem or bypass an image
