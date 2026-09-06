@@ -37,6 +37,33 @@ class ManagedEmulator:
 
 FSUAE_ROOT = Path(os.environ.get("AMIGA_FSUAE_ROOT", "/usr/bin"))
 
+#: The names FS-UAE is installed under. The Debian package provides fs-uae; a
+#: Snap exposes it as fsuae.fs-uae, and a Flatpak through its own wrapper. An
+#: installation that works from a terminal should work here, so all of them are
+#: looked for rather than only the Debian spelling.
+FSUAE_EXECUTABLE_NAMES = ("fs-uae", "fsuae.fs-uae", "fsuae", "fs-uae-launcher")
+
+
+def _fsuae_executable() -> str:
+    """Locate FS-UAE, or return the conventional path so the error names it.
+
+    ``AMIGA_FSUAE_EXECUTABLE`` names one exact binary and wins outright, which
+    is what a build or a test needs. Otherwise the configured root is tried
+    first, then PATH, under each name a packaging format uses.
+    """
+    override = os.environ.get("AMIGA_FSUAE_EXECUTABLE", "").strip()
+    if override:
+        return override
+    for name in FSUAE_EXECUTABLE_NAMES:
+        candidate = FSUAE_ROOT / name
+        if candidate.is_file():
+            return str(candidate)
+    for name in FSUAE_EXECUTABLE_NAMES:
+        found = shutil.which(name)
+        if found:
+            return found
+    return str(FSUAE_ROOT / "fs-uae")
+
 #: Where a user's own Kickstart ROMs are looked for. Nothing is copied out.
 KICKSTART_DIR = Path(
     os.environ.get(
@@ -50,7 +77,7 @@ ALL_MACHINES = ("a500", "a500plus", "a600", "a1200", "a2000", "a3000", "a4000", 
 EMULATORS = {
     "fs-uae": ManagedEmulator(
         "fs-uae", "FS-UAE",
-        str(FSUAE_ROOT / "fs-uae"), "fs-uae --console-debugger", ALL_MACHINES,
+        _fsuae_executable(), "fs-uae --console-debugger", ALL_MACHINES,
     ),
 }
 
@@ -86,10 +113,11 @@ def kickstart_for(machine: str) -> Path | None:
         candidate = KICKSTART_DIR / name
         if candidate.is_file():
             return candidate
-    if KICKSTART_DIR.is_dir():
-        roms = sorted(KICKSTART_DIR.glob("*.rom"))
-        if roms:
-            return roms[0]
+    # No fallback to "whatever ROM is there". The directory legitimately holds
+    # ROMs for several machines, and an extended or cartridge ROM among them is
+    # not a Kickstart at all, so the first name alphabetically was as likely to
+    # be wrong as right. A machine with no matching ROM has none, and saying so
+    # is what lets the caller name the file that is missing.
     return None
 
 
