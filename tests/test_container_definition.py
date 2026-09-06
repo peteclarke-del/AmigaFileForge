@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import unittest
 
 
@@ -38,14 +39,29 @@ class ContainerDefinitionTests(unittest.TestCase):
         self.assertIn("import amiganut", runtime_definition)
 
     def test_no_amiga_firmware_is_shipped_or_downloaded(self):
-        """Kickstart is not redistributable, so no build step may fetch one."""
+        """Kickstart is not redistributable, so no build step may fetch one.
+
+        The check is on what the repository *tracks*, not on what happens to
+        be in the directory. ``firmware/`` is where an operator is told to put
+        their own ROMs so the emulator can find them, and it is ignored by git
+        for exactly that reason. Reading the directory instead would fail on
+        any machine that had followed those instructions, which is the wrong
+        way round: the working copy is allowed to hold ROMs, and the public
+        repository is not.
+        """
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         for forbidden in ("kick13", "kick31", "kickstart.rom", "amiga-os"):
             self.assertNotIn(forbidden, dockerfile.lower())
-        firmware = ROOT / "firmware"
-        self.assertEqual(
-            sorted(path.name for path in firmware.iterdir()), ["README.md"]
-        )
+        try:
+            listed = subprocess.run(
+                ["git", "ls-files", "firmware"],
+                cwd=ROOT, capture_output=True, text=True, check=True, timeout=30,
+            ).stdout.split()
+        except (OSError, subprocess.SubprocessError):
+            # An export or a source tarball has no git metadata. There is
+            # nothing to check there, because nothing can be committed from it.
+            self.skipTest("this working copy is not a git repository")
+        self.assertEqual(sorted(listed), ["firmware/README.md"])
 
     def test_public_clone_instructions_do_not_require_a_github_key(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
