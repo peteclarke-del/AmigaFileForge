@@ -14,8 +14,18 @@ fi
 
 "$project_root/tools/build-linux-package.sh" "$output_dir"
 
-sha256sum "$output_dir/AmigaFileForge-$version-source.tar.gz" \
-    "$output_dir"/amiga-file-forge_*.deb \
-    > "$output_dir/SHA256SUMS"
+# Record the names as they are published. GitHub rewrites the Debian tilde
+# in an asset name to a dot, so a checksum file naming the built artefact
+# cannot verify the downloaded one.
+for package in "$output_dir"/amiga-file-forge_*'~'*.deb; do
+    [ -e "$package" ] || continue
+    mv -- "$package" "$(printf '%s' "$package" | tr '~' '.')"
+done
+
+(
+    cd "$output_dir"
+    sha256sum -- "AmigaFileForge-$version-source.tar.gz" amiga-file-forge_*.deb \
+        | sort --key=2 > SHA256SUMS
+)
 
 echo "Release artefacts are ready in $output_dir"
