@@ -122,13 +122,33 @@ class CatalogueService:
             "options": dict(row.get("options") or {}) if isinstance(row.get("options") or {}, dict) else {},
         }
 
-    def _fetch(self, url: str, *, limit: int = 32 * 1024 * 1024, ttl: int = 900) -> bytes:
+    def _fetch(
+        self,
+        url: str,
+        *,
+        limit: int = 32 * 1024 * 1024,
+        ttl: int = 900,
+        form: dict[str, str] | None = None,
+    ) -> bytes:
+        """Read a catalogue page, optionally by submitting its search form.
+
+        Some archives only search through a POST form: OS4Depot's index takes
+        an ``f_fields`` field and ignores anything in the query string. A
+        posted request is cached under a key that includes the fields, so two
+        different searches are not served each other's results.
+        """
         url = self._http_url(url)
-        cached = self._pages.get(url)
+        key = url if not form else f"{url}#" + urllib.parse.urlencode(sorted(form.items()))
+        cached = self._pages.get(key)
         if cached and cached.expires > time.time():
             return cached.body
         url = outbound_checked_url(url)
-        request = urllib.request.Request(url, headers={"User-Agent": "AmigaFileForge/1.0 (+local archival tool)", "Accept-Encoding": "identity"})
+        headers = {"User-Agent": "AmigaFileForge/1.0 (+local archival tool)", "Accept-Encoding": "identity"}
+        payload = None
+        if form:
+            payload = urllib.parse.urlencode(form).encode("utf-8")
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        request = urllib.request.Request(url, data=payload, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=25) as response:
                 length = int(response.headers.get("Content-Length") or 0)
@@ -141,7 +161,7 @@ class CatalogueService:
             raise DiskError(f"Could not contact {urllib.parse.urlparse(url).netloc}: {exc}") from exc
         if len(body) > limit:
             raise DiskError(f"The remote file is larger than the {limit // (1024 * 1024)} MB safety limit.")
-        self._pages[url] = CachedPage(time.time() + ttl, body)
+        self._pages[key] = CachedPage(time.time() + ttl, body)
         return body
 
     def search(self, query: str, machine: str, source_ids: set[str] | None = None) -> tuple[list[dict], list[dict]]:
@@ -222,6 +242,7 @@ class CatalogueService:
         loader_name = str(options.get("loader") or "page")
         loaders = {
             "page": self._load_page,
+            "form-post": self._load_form_post,
             "category-crawl": self._load_category_crawl,
             "machine-index": self._load_machine_index,
         }
@@ -243,6 +264,28 @@ class CatalogueService:
             url,
             limit=max(1, int(options.get("pageLimitMb", 8))) * 1024 * 1024,
             ttl=max(60, int(options.get("cacheSeconds", 900))),
+        ).decode(str(options.get("encoding") or "utf-8"), "replace")
+        return self._parse_rows(source, body, str(options.get("parser") or "links"), {"url": url, "machine": machine})
+
+    def _load_form_post(self, source: dict, query: str, machine: str) -> list[dict]:
+        """Search an archive whose only search is a POST form.
+
+        ``formFields`` names the fields and their values, with ``{query}``
+        standing for the search text. OS4Depot is the reason this exists: its
+        index accepts nothing in the query string and answers only a posted
+        ``f_fields``.
+        """
+        options = source.get("options", {})
+        url = urllib.parse.urljoin(source["url"], str(options.get("queryTemplate") or ""))
+        fields = options.get("formFields") or {}
+        if not isinstance(fields, dict) or not fields:
+            raise DiskError(f"{source.get('name') or source['id']} has no search form fields configured.")
+        form = {str(name): str(value).replace("{query}", query) for name, value in fields.items()}
+        body = self._fetch(
+            url,
+            limit=max(1, int(options.get("pageLimitMb", 8))) * 1024 * 1024,
+            ttl=max(60, int(options.get("cacheSeconds", 900))),
+            form=form,
         ).decode(str(options.get("encoding") or "utf-8"), "replace")
         return self._parse_rows(source, body, str(options.get("parser") or "links"), {"url": url, "machine": machine})
 
@@ -538,7 +581,37 @@ class CatalogueService:
             re.I,
         )
         publisher = str(source.get("options", {}).get("defaultPublisher") or source.get("name") or "")
-        return [_item((title or code).strip(), publisher, "", urllib.parse.urljoin(source["url"], url), source["url"], "disk-image", description=code.strip()) for url, code, title in pattern.findall(body)]
+        options = source.get("options", {})
+        # Some archives name the file in a query parameter and link the actual
+        # download from a description page, usually behind an icon with no text
+        # for this pattern to match. Such a source sets rowResolver, and the
+        # row is carried as a page for the resolver to follow rather than as a
+        # download address that would not fetch anything.
+        resolver = str(options.get("rowResolver") or "") or None
+        # The resolver needs to know which links on the page are the download.
+        # A default of "/download/" suits sites that use that path; OS4Depot
+        # serves its files from /share/, so the source says so.
+        resolver_options = options.get("resolverOptions") if isinstance(options.get("resolverOptions"), dict) else {}
+        rows, seen = [], set()
+        for url, code, title in pattern.findall(body):
+            # An href is HTML, so &amp; in a query string is an escaped
+            # ampersand rather than part of the address.
+            resolved = urllib.parse.urljoin(source["url"], html.unescape(url))
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            entry = _item(
+                (title or code).strip(), publisher, "",
+                None if resolver else resolved,
+                resolved if resolver else source["url"],
+                "disk-image",
+                description=code.strip(),
+                resolver=resolver,
+            )
+            if resolver and resolver_options:
+                entry["resolverOptions"] = dict(resolver_options)
+            rows.append(entry)
+        return rows
 
     @staticmethod
     def _parse_package_paragraphs(source: dict, body: str, _context: dict) -> list[dict]:
@@ -603,12 +676,35 @@ class CatalogueService:
 
     @staticmethod
     def _parse_links(source: dict, body: str, _context: dict) -> list[dict]:
+        """Collect the result links on a catalogue's search page.
+
+        A site writes its own results as relative hrefs -- Lemon Amiga links a
+        game as ``/game/defender`` -- so matching only ``https://`` finds the
+        outbound links in the page furniture and none of the results. Each href
+        is resolved against the page it came from before anything else looks at
+        it.
+
+        ``linkPattern`` is how a source says which of its links are results. A
+        search page also carries navigation, help and social links, and without
+        a pattern every one of them arrives as a catalogue entry.
+        """
+        options = source.get("options") or {}
+        base = str((_context or {}).get("url") or source.get("url") or "")
+        try:
+            pattern = re.compile(str(options.get("linkPattern") or ""), re.I) if options.get("linkPattern") else None
+        except re.error:
+            pattern = None
         rows, seen = [], set()
-        for href, title in re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', body, re.I | re.S):
-            clean = re.sub(r"<[^>]+>", " ", title); clean = html.unescape(re.sub(r"\s+", " ", clean)).strip()
-            if len(clean) < 2 or href in seen:
+        for href, title in re.findall(r'<a[^>]+href="([^"#][^"]*)"[^>]*>(.*?)</a>', body, re.I | re.S):
+            resolved = urllib.parse.urljoin(base, html.unescape(href)) if base else href
+            if not resolved.lower().startswith(("http://", "https://")):
                 continue
-            seen.add(href); rows.append(_item(clean, "", "", None, href, "external", downloadable=False))
+            if pattern and not pattern.search(resolved):
+                continue
+            clean = re.sub(r"<[^>]+>", " ", title); clean = html.unescape(re.sub(r"\s+", " ", clean)).strip()
+            if len(clean) < 2 or resolved in seen:
+                continue
+            seen.add(resolved); rows.append(_item(clean, "", "", None, resolved, "external", downloadable=False))
         return rows[:300]
 
     def item(self, token: str) -> dict:
