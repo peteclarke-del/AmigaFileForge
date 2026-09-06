@@ -40,14 +40,15 @@
       "a4000",
       "cd32"
     ],
-    "enabled": true,
+    "enabled": false,
     "direct": true,
     "options": {
       "loader": "page",
       "parser": "zip-links",
       "defaultPublisher": "WHDLoad",
       "cacheSeconds": 86400
-    }
+    },
+    "disabledReason": "whdload.de serves 403 for /games/ to every client tried, browser user agents included, while the rest of the site answers normally. The installer index is not reachable programmatically."
   },
   {
     "id": "hall-of-light",
@@ -64,14 +65,15 @@
       "a4000",
       "cd32"
     ],
-    "enabled": true,
+    "enabled": false,
     "direct": false,
     "options": {
       "loader": "page",
       "parser": "links",
       "queryTemplate": "games/search?q={query}",
       "cacheSeconds": 86400
-    }
+    },
+    "disabledReason": "Hall of Light now sits behind an Anubis proof-of-work bot check, which answers an ordinary HTTP client with a challenge page instead of the catalogue. There is no query this tool can send that reaches the database."
   },
   {
     "id": "lemon-amiga",
@@ -94,7 +96,8 @@
       "loader": "page",
       "parser": "links",
       "queryTemplate": "games/list.php?list_title={query}",
-      "cacheSeconds": 86400
+      "cacheSeconds": 86400,
+      "linkPattern": "/game/"
     }
   },
   {
@@ -195,17 +198,27 @@
     "id": "os4depot",
     "name": "OS4Depot AmigaOS 4 packages",
     "type": "configured",
-    "url": "https://os4depot.net/index.php?function=search&search={query}",
+    "url": "https://os4depot.net/",
     "machines": [
       "amigaos"
     ],
     "enabled": true,
     "direct": true,
     "options": {
-      "loader": "page",
+      "loader": "form-post",
       "parser": "zip-links",
+      "queryTemplate": "index.php?function=search&tool=simple",
+      "formFields": {
+        "f_fields": "{query}",
+        "f_quicksearch": "Search"
+      },
       "defaultPublisher": "OS4Depot contributors",
-      "cacheSeconds": 86400
+      "encoding": "iso-8859-15",
+      "cacheSeconds": 3600,
+      "rowResolver": "media-links",
+      "resolverOptions": {
+        "downloadPathContains": "/share/"
+      }
     }
   },
   {
