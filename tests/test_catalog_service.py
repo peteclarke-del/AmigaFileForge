@@ -3,6 +3,7 @@ import copy
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 
@@ -352,6 +353,76 @@ class CatalogueServiceTests(unittest.TestCase):
         entry.external_attr = 0o100644 << 16
         self.assertIsNone(amiga_zip_metadata(entry))
 
+
+class CatalogueParserTests(unittest.TestCase):
+    """The parsers, against the shapes real archives actually serve."""
+
+    @staticmethod
+    def _service(folder):
+        return CatalogueService(Path(folder))
+
+    def test_relative_result_links_are_resolved_against_the_page(self) -> None:
+        """A site links its own results relatively, and those are the results.
+
+        Lemon Amiga writes a game as ``/game/defender``. Matching only absolute
+        addresses found the outbound links in the page furniture and none of
+        the games, so the source appeared to return nothing at all.
+        """
+        source = {
+            "id": "example", "name": "Example", "url": "https://example.test/",
+            "options": {"linkPattern": "/game/"},
+        }
+        body = (
+            '<a href="https://sponsor.test/ad">Buy something</a>'
+            '<a href="/game/defender">Defender</a>'
+            '<a href="/game/centurion">Centurion: Defender of Rome</a>'
+            '<a href="/games/advanced_search.php">Go to Advanced Search</a>'
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            rows = self._service(folder)._parse_links(
+                source, body, {"url": "https://example.test/games/list.php?list_title=defender"},
+            )
+        self.assertEqual(
+            [row["pageUrl"] for row in rows],
+            ["https://example.test/game/defender", "https://example.test/game/centurion"],
+        )
+        # linkPattern is what keeps the advert and the navigation out.
+        self.assertEqual([row["title"] for row in rows], ["Defender", "Centurion: Defender of Rome"])
+
+    def test_links_without_a_pattern_still_exclude_fragments(self) -> None:
+        source = {"id": "example", "name": "Example", "url": "https://example.test/", "options": {}}
+        body = '<a href="#top">Top</a><a href="/one.html">One</a>'
+        with tempfile.TemporaryDirectory() as folder:
+            rows = self._service(folder)._parse_links(source, body, {"url": "https://example.test/"})
+        self.assertEqual([row["pageUrl"] for row in rows], ["https://example.test/one.html"])
+
+    def test_an_escaped_ampersand_is_not_part_of_the_address(self) -> None:
+        """An href is HTML: ``&amp;`` in a query string is one ampersand."""
+        source = {
+            "id": "example", "name": "Example", "url": "https://example.test/",
+            "options": {"rowResolver": "media-links", "resolverOptions": {"downloadPathContains": "/share/"}},
+        }
+        body = "<A HREF='?function=showfile&amp;file=network/odyssey.lha'>Odyssey - a browser</A>"
+        with tempfile.TemporaryDirectory() as folder:
+            rows = self._service(folder)._parse_zip_links(source, body, {})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0]["pageUrl"], "https://example.test/?function=showfile&file=network/odyssey.lha",
+        )
+        # A row the resolver has to follow carries the page, not a download
+        # address that would fetch a description instead of the file.
+        self.assertIsNone(rows[0]["downloadUrl"])
+        self.assertEqual(rows[0]["resolverOptions"], {"downloadPathContains": "/share/"})
+        self.assertTrue(rows[0]["downloadable"])
+
+    def test_a_form_post_source_needs_its_fields(self) -> None:
+        source = {
+            "id": "example", "name": "Example", "url": "https://example.test/",
+            "options": {"loader": "form-post", "queryTemplate": "search.php"},
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(DiskError, "search form fields"):
+                self._service(folder)._load_form_post(source, "odyssey", "amigaos")
 
 if __name__ == "__main__":
     unittest.main()
