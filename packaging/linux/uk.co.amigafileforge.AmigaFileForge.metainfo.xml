@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
   <releases>
+    <release version="1.2.0" date="2026-09-06">
+      <description>
+        <p>Adds installing a floppy onto a hard drive, by staging a multi-disc set, by installing WHDLoad, or by running the title's own installer under emulation. Reads LHA archives without an external decompressor.</p>
+      </description>
+    </release>
     <release version="1.1.1" date="2026-09-02">
       <description>
         <p>Keeps the source disc's boot option when its files are installed into the root of an FFS image, so an installed disc still starts itself.</p>
