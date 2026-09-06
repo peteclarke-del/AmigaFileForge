@@ -56,7 +56,7 @@ docker compose up --build -d
 SSH cloning also works when your GitHub public key is configured, but it is not
 required to install or run the application.
 
-Open <http://localhost:8666>.
+Open <http://localhost:8674>.
 
 Linux users can instead install the GTK 4 desktop host. GTK and Libadwaita
 provide the window decorations, application menu, symbolic icons and local
@@ -108,7 +108,9 @@ implemented and tested for both web and desktop hosts.
 If your system still uses the standalone Compose command, replace
 `docker compose` with `docker-compose` in the examples below.
 
-The service listens on port `8666`. Its working images are stored in the
+The container listens on port `8666` and Compose publishes it on `8674`, so
+it does not collide with anything already using the default. Its working
+images are stored in the
 `amiga-file-forge-work` Docker volume. Files selected in the browser are uploaded into
 private working sessions; the application does not mount or alter the source
 directory on the host.
@@ -2557,7 +2559,9 @@ Run the standalone editor language-engine regressions:
 node tests/run_js_tests.js
 ```
 
-Run the permanent browser regression against the service on port 8666:
+Run the permanent browser regression against a service on port 8666, which
+is where the CI container publishes it. Set `AMIGA_FILE_FORGE_URL` for any
+other address, including the Compose default of 8674:
 
 ```bash
 npm install
@@ -2570,7 +2574,7 @@ Set `AMIGA_FILE_FORGE_URL` when the service is listening elsewhere.
 Check the running service:
 
 ```bash
-curl http://localhost:8666/api/health
+curl http://localhost:8674/api/health
 ```
 
 A healthy response looks like:
