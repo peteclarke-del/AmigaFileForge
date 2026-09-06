@@ -21,6 +21,7 @@ that match the running frontend.
 | Understand every supported media family and normal workflow | [Main project handbook](../README.md) |
 | Edit BASIC, command files, machine code, archives or binary data | [File editor and code analysis](FILE-EDITOR-GUIDE.md) |
 | Inspect, preserve or edit protection bits, comments and datestamps | [Amiga file catalogue metadata](FILE-METADATA-GUIDE.md) |
+| Install a floppy onto a hard drive, with WHDLoad, an installer or staging | [Installing a floppy onto a hard drive](INSTALL-GUIDE.md) |
 | Inspect, compare, build, patch or program ROM and Kickstart ROMs | [ROM image handbook](ROM-GUIDE.md) |
 | Build and validate a release | [Release checklist](RELEASE-CHECKLIST.md) |
 | Review the stable 1.1.1 release | [Amiga File Forge 1.1.1 notes](releases/1.1.1.md) |
