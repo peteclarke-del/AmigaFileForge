@@ -64,7 +64,7 @@ A release `.deb` installs the same desktop host without retaining a Git
 checkout or creating a per-checkout virtual environment:
 
 ```bash
-sudo apt install ./amiga-file-forge_1.1.1-1~deb13_amd64.deb
+sudo apt install ./amiga-file-forge_1.2.0-1~deb13_amd64.deb
 ```
 
 The package places the shared application in `/opt/amiga-file-forge` and the

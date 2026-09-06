@@ -184,7 +184,7 @@ hard drive's geometry is not something a flux container can represent.
 
 ### “The HFE conversion engine is not installed”
 
-Official 1.1.1 Docker images and native packages bundle HxCFE. If this error
+Official 1.2.0 Docker images and native packages bundle HxCFE. If this error
 appears, confirm that the package is current and that all runtime files are
 present:
 

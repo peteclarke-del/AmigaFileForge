@@ -24,7 +24,7 @@ that match the running frontend.
 | Install a floppy onto a hard drive, with WHDLoad, an installer or staging | [Installing a floppy onto a hard drive](INSTALL-GUIDE.md) |
 | Inspect, compare, build, patch or program ROM and Kickstart ROMs | [ROM image handbook](ROM-GUIDE.md) |
 | Build and validate a release | [Release checklist](RELEASE-CHECKLIST.md) |
-| Review the stable 1.1.1 release | [Amiga File Forge 1.1.1 notes](releases/1.1.1.md) |
+| Review the stable 1.2.0 release | [Amiga File Forge 1.2.0 notes](releases/1.2.0.md) |
 | Contribute code or documentation | [Contribution guide](../CONTRIBUTING.md) |
 | Understand maintainership and project decisions | [Project governance](../GOVERNANCE.md) |
 | Report a vulnerability | [Security policy](../SECURITY.md) |
