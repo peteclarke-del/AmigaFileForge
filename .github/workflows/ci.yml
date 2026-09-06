@@ -131,7 +131,7 @@ jobs:
             --volume "${{ github.workspace }}:/source" \
             --workdir /source \
             amiga-file-forge:matrix-${{ matrix.tag }} \
-            sh -lc 'set -eu; uname -m; test -x /usr/local/bin/hxcfe; test -x /opt/fs-uae/fs-uae; test -x /opt/vamiga/vamiga; python -c "import tempfile; from pathlib import Path; import flask; import amiganut.ffs; import amiganut.kickfs; from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_M68K, Cs; from app.server import create_app; Cs(CS_ARCH_ARM, 0); Cs(CS_ARCH_M68K, 0); Cs(CS_ARCH_M68K, 0); work = Path(tempfile.mkdtemp()); app = create_app(work_dir=work); client = app.test_client(); response = client.get(\"/api/health\"); assert response.status_code == 200, response.get_data(as_text=True); print(\"Architecture-native runtime gate passed\")"' \
+            sh -lc 'set -eu; uname -m; test -x /usr/local/bin/hxcfe; test -x /usr/bin/fs-uae; python -c "import tempfile; from pathlib import Path; import flask; import amiganut.filesystem; import amiganut.kickfs; from capstone import CS_ARCH_M68K, CS_MODE_M68K_000, Cs; from app.server import create_app; Cs(CS_ARCH_M68K, CS_MODE_M68K_000); work = Path(tempfile.mkdtemp()); app = create_app(work_dir=work); client = app.test_client(); response = client.get(\"/api/health\"); assert response.status_code == 200, response.get_data(as_text=True); print(\"Architecture-native runtime gate passed\")"' \
             2>&1 | tee output/release-evidence/${{ matrix.tag }}.log
 
       - name: Verify service health on the target architecture
