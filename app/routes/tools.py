@@ -1189,7 +1189,7 @@ def create_tools_blueprint(
         })
 
     @blueprint.post("/api/images/<image_id>/install/amigaos-cd")
-    @request_effect("external", "booting a drive with an AmigaOS release CD attached")
+    @image_mutation("activating the CD driver and booting with a release CD")
     def install_amigaos_cd(image_id):
         """Boot this drive with the AmigaOS release CD in the CD drive.
 
@@ -1211,6 +1211,12 @@ def create_tools_blueprint(
         checked = service.amigaos_cd_preflight(session, disc)
         if not checked["ready"]:
             raise DiskError(checked["blocking"][0])
+        # A stock Workbench 3.1 drive has the CD filing system in L: and the
+        # CD0 mountlist parked in Storage, which AmigaDOS does not read, so the
+        # machine would boot and see no disc at all. Switching it on is a write
+        # to the image, which is why this route declares itself a mutation and
+        # takes an undo checkpoint before it runs.
+        driver = service.activate_cd_driver(session)
         configured = requested_emulator_session(session, data)
         launch = copy(configured)
         launch.hardware_profile = dict(configured.hardware_profile or {})
@@ -1236,10 +1242,11 @@ def create_tools_blueprint(
             "machine": str(started.hardware_profile.get("machine") or ""),
             "release": release.get("label", ""),
             "disc": disc.name,
+            "cdDriver": driver,
             "warnings": checked.get("warnings", []),
             "summary": (
                 f"{emulator.label} is running with {release.get('label', 'the disc')} "
-                f"in the CD drive. Open the disc on the Workbench and run its "
+                f"in the CD drive as CD0:. Open the disc on the Workbench and run its "
                 f"installation icon; it will ask where to install and what to include."
             ),
             "displayMode": "native" if runtime.kind == "desktop" else "browser",

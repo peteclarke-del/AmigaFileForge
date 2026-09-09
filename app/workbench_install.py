@@ -457,13 +457,92 @@ class WorkbenchInstallMixin:
                     f"{found['diskSpaceMb']} MB and this volume has less free than that."
                 )
 
+        driver = self.cd_driver_state(target) if not blocking else {}
+        if driver and not driver["active"]:
+            if driver["parked"] and driver["filesystem"]:
+                warnings.append(
+                    "The CD-ROM driver is parked in Storage/DOSDrivers, which is where "
+                    "Workbench keeps what is not yet wanted, so AmigaDOS cannot see a "
+                    "disc. It will be activated as CD0: before the machine starts."
+                )
+            else:
+                warnings.append(
+                    "This volume has no CD-ROM driver. The Workbench Extras disk supplies "
+                    "the filing system and the Storage disk supplies the CD0 mountlist, so "
+                    "install those before expecting the disc to appear."
+                )
         return {
             "ready": not blocking,
             "disc": found,
             "machine": profile_machine(target),
             "processorReady": ready,
+            "cdDriver": driver,
             "blocking": blocking,
             "warnings": warnings,
+        }
+
+    def cd_driver_state(self, target: ImageSession) -> dict:
+        """Whether this volume can mount a CD, and what is missing if not."""
+        from . import volume_copy
+        from .amigaos_cd import CD_DRIVER_ACTIVE, CD_DRIVER_PARKED, CD_FILESYSTEM
+
+        return {
+            "filesystem": volume_copy.entry_exists(self, target, CD_FILESYSTEM),
+            "active": volume_copy.entry_exists(self, target, CD_DRIVER_ACTIVE),
+            "parked": volume_copy.entry_exists(self, target, CD_DRIVER_PARKED),
+        }
+
+    def activate_cd_driver(self, target: ImageSession) -> dict:
+        """Make a parked CD-ROM driver active, so a disc mounts as CD0:.
+
+        A Workbench 3.1 installation has everything needed and none of it
+        switched on. The Extras disk puts the filing system in ``L:``, and the
+        Storage disk puts the mountlist in ``Storage/DOSDrivers``, which is
+        where Workbench keeps what is not yet wanted. AmigaDOS only reads
+        ``Devs/DOSDrivers``, so a stock drive cannot see a CD at all.
+
+        Commodore's mountlist leaves Device and Unit commented out and takes
+        them from tooltypes on the CD0 icon, defaulting to a real SCSI drive.
+        Nothing emulated answers there, so they are written into the mountlist,
+        which is the form its own comment documents and the only one this
+        application can write without an icon editor.
+        """
+        from . import volume_copy
+        from .amigaos_cd import (
+            CD_DRIVER_ACTIVE,
+            CD_DRIVER_PARKED,
+            EMULATED_CD_DEVICE,
+            EMULATED_CD_UNIT,
+            mountlist_with_device,
+        )
+
+        state = self.cd_driver_state(target)
+        if state["active"]:
+            return {"changed": False, "state": state, "detail": "CD0 was already active."}
+        if not state["parked"]:
+            return {
+                "changed": False,
+                "state": state,
+                "detail": (
+                    "This volume has no CD0 mountlist in Storage/DOSDrivers, so there is "
+                    "nothing to activate. It comes from the Workbench Storage disk."
+                ),
+            }
+        mountlist = self.read_file(target, CD_DRIVER_PARKED).decode("latin-1")
+        volume_copy.write_file(
+            self,
+            target,
+            CD_DRIVER_ACTIVE,
+            mountlist_with_device(mountlist, EMULATED_CD_DEVICE, EMULATED_CD_UNIT).encode("latin-1"),
+        )
+        self._persist_session(target)
+        return {
+            "changed": True,
+            "state": self.cd_driver_state(target),
+            "detail": (
+                f"CD0 activated in Devs/DOSDrivers, pointed at {EMULATED_CD_DEVICE} "
+                f"unit {EMULATED_CD_UNIT}."
+            ),
         }
 
     def _workbench_readiness(self, target: ImageSession) -> list[str]:
