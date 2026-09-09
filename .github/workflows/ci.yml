@@ -39,6 +39,18 @@ jobs:
       - name: Install browser test dependencies
         run: npm ci
 
+      # The runner image carries Google's Chrome package repository, and
+      # installing Playwright's dependencies updates every source apt knows
+      # about. When Google serves an index that disagrees with their own
+      # release file, apt fails the whole update and the browser install stops
+      # before a single test has run. The browser these tests drive is
+      # Playwright's own Chromium build, downloaded separately, so that
+      # repository is never wanted here and a run should not depend on it.
+      - name: Drop the unused Google Chrome package source
+        run: |
+          sudo grep -rl 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
+            | sudo xargs -r rm -f
+
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
