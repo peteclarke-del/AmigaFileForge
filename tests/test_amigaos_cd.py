@@ -27,7 +27,7 @@ from app.amigaos_cd import (
     processor_ready,
     release_for_volume,
 )
-from app.disk_service import DiskService
+from app.disk_service import DiskError, DiskService
 from app.image_opening import open_image_path
 from tests.iso_fixture import build_iso, directory, file
 
@@ -182,6 +182,113 @@ class PreflightTests(unittest.TestCase):
 
         self.assertFalse(found["recognised"])
         self.assertIn("not a CD image", found["reason"])
+
+
+class CdDriverTests(unittest.TestCase):
+    """Making a disc visible, which a stock Workbench 3.1 drive cannot do.
+
+    Everything needed is present after an ordinary Workbench install and none
+    of it is switched on: the Extras disk puts the filing system in ``L:`` and
+    the Storage disk puts the mountlist in ``Storage/DOSDrivers``, which is the
+    drawer Workbench keeps what is not yet wanted in. AmigaDOS reads only
+    ``Devs/DOSDrivers``, so the machine boots and sees no disc.
+    """
+
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self._temporary.name)
+        self.addCleanup(self._temporary.cleanup)
+        self.service = DiskService(self.root / "work")
+        self.drive = self.service.create_blank("ffs-hard", "SYSTEM", "40MB")
+        self.service.select_partition(self.drive, 0)
+
+    def _put(self, path: str, data: bytes) -> None:
+        directory = "/".join(path.split("/")[:-1])
+        if directory:
+            try:
+                self.service.make_directory(self.drive, directory)
+            except DiskError:
+                pass
+        host = self.root / "payload"
+        host.write_bytes(data)
+        self.service.put(self.drive, path, host)
+
+    #: The shape Commodore ships, with Device and Unit commented out.
+    STOCK = (
+        b"/* CD0 40.6\n * Device\t= scsi.device\n * Unit\t= 2\n */\n"
+        b"FileSystem\t= L:CDFileSystem\nSectorSize\t= 2048\n"
+        b"DosType\t\t= 0x43443031\n"
+    )
+
+    def test_a_stock_workbench_drive_cannot_see_a_disc(self) -> None:
+        self._put("L/CDFileSystem", b"filesystem")
+        self._put("Storage/DOSDrivers/CD0", self.STOCK)
+
+        state = self.service.cd_driver_state(self.drive)
+
+        self.assertTrue(state["filesystem"])
+        self.assertTrue(state["parked"])
+        self.assertFalse(state["active"])
+
+    def test_activating_it_writes_a_mountlist_amigados_reads(self) -> None:
+        self._put("L/CDFileSystem", b"filesystem")
+        self._put("Storage/DOSDrivers/CD0", self.STOCK)
+
+        result = self.service.activate_cd_driver(self.drive)
+
+        self.assertTrue(result["changed"])
+        self.assertTrue(self.service.cd_driver_state(self.drive)["active"])
+        written = self.service.read_file(self.drive, "Devs/DOSDrivers/CD0").decode("latin-1")
+        self.assertIn("uaescsi.device", written)
+        self.assertIn("Unit", written)
+        # The filing system line the mountlist came with has to survive.
+        self.assertIn("L:CDFileSystem", written)
+
+    def test_the_stock_scsi_defaults_are_not_left_active(self) -> None:
+        """Commodore's defaults name a real drive at unit 2, which is not there."""
+        self._put("L/CDFileSystem", b"filesystem")
+        self._put("Storage/DOSDrivers/CD0", self.STOCK)
+
+        self.service.activate_cd_driver(self.drive)
+
+        written = self.service.read_file(self.drive, "Devs/DOSDrivers/CD0").decode("latin-1")
+        active = [
+            line for line in written.splitlines()
+            if line.strip().lower().startswith(("device", "unit"))
+        ]
+        self.assertEqual(len(active), 2)
+        self.assertTrue(all("scsi.device" not in line or "uaescsi" in line for line in active))
+
+    def test_a_drive_that_already_has_it_is_left_alone(self) -> None:
+        self._put("Devs/DOSDrivers/CD0", b"Device = uaescsi.device\nUnit = 0\n")
+
+        result = self.service.activate_cd_driver(self.drive)
+
+        self.assertFalse(result["changed"])
+        self.assertIn("already active", result["detail"])
+
+    def test_a_drive_with_no_mountlist_says_where_it_comes_from(self) -> None:
+        result = self.service.activate_cd_driver(self.drive)
+
+        self.assertFalse(result["changed"])
+        self.assertIn("Storage disk", result["detail"])
+
+    def test_the_preflight_says_the_driver_will_be_switched_on(self) -> None:
+        self._put("L/CDFileSystem", b"filesystem")
+        self._put("Storage/DOSDrivers/CD0", self.STOCK)
+        self._put("S/Startup-Sequence", b"C:SetPatch\n")
+        self.drive.hardware_profile = {"machine": "a1200", "addons": ["kick31"]}
+        tree = directory("")
+        tree.add(directory("OS-Version3.9")).add(file("Install", b"script"))
+        path = self.root / "disc.iso"
+        path.write_bytes(build_iso(tree, volume="AmigaOS3.9"))
+        disc = open_image_path(self.service, path)
+
+        checked = self.service.amigaos_cd_preflight(self.drive, disc)
+
+        self.assertTrue(checked["ready"])
+        self.assertFalse(checked["cdDriver"]["active"])
+        self.assertTrue(any("activated as CD0:" in item for item in checked["warnings"]))
 
 
 class EmulatorAttachmentTests(unittest.TestCase):
