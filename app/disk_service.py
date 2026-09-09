@@ -16,6 +16,7 @@ from typing import BinaryIO, Callable
 
 from .ffs_install_service import FFSInstallMixin
 from .install_service import InstallMixin
+from .iso_disk_service import IsoDiskMixin
 from .workbench_install import WorkbenchInstallMixin
 from .hardfile_geometry import (
     BLOCK_SIZE as HARDFILE_SECTOR_SIZE,
@@ -35,6 +36,7 @@ from .image_session import (
 )
 from .formats import (
     DMS_EXTENSIONS,
+    ISO_EXTENSIONS,
     FFS_EXTENSIONS,
     HDF_EXTENSIONS,
     HFE_EXTENSIONS,
@@ -101,6 +103,7 @@ class DiskService(
     FilesystemDiskMixin,
     FFSInstallMixin,
     InstallMixin,
+    IsoDiskMixin,
     WorkbenchInstallMixin,
     RdbPartitionMixin,
     RomDiskMixin,
@@ -159,9 +162,28 @@ class DiskService(
             return "scp"
         if ext in IPF_EXTENSIONS:
             return "ipf"
+        if ext in ISO_EXTENSIONS:
+            return "iso"
         if ext in ROM_EXTENSIONS:
             return "rom"
         return "unknown"
+
+    @staticmethod
+    def _looks_like_iso(path: Path) -> bool:
+        """Whether this file announces itself as an ISO 9660 disc.
+
+        The identifier sits at the start of sector sixteen, so this reads two
+        kilobytes at a known offset rather than scanning.
+        """
+        from .iso9660 import FIRST_DESCRIPTOR_SECTOR, SECTOR
+
+        offset = FIRST_DESCRIPTOR_SECTOR * SECTOR
+        try:
+            with path.open("rb") as handle:
+                handle.seek(offset)
+                return handle.read(6)[1:6] == b"CD001"
+        except OSError:
+            return False
 
     def identify_kind(self, path: Path, expected_kind: str | None = None) -> str:
         """Identify media, constraining probes when its format is already known.
@@ -173,6 +195,12 @@ class DiskService(
         the cascade still validates the bytes and leaves the generic path
         available for ambiguous names.
         """
+        # A CD carries no AmigaDOS filing system, so the cascade below would
+        # refuse it with a message about supplying a raw image. It identifies
+        # itself at a fixed offset, which is cheap to check and is exactly the
+        # "from its bytes, not from the name" rule the rest of this obeys.
+        if self._looks_like_iso(path):
+            return "iso"
         expected_filesystems = {
             "ffs": ("ffs", "ofs", "rdb"),
             "ofs": ("ofs", "ffs"),
@@ -2134,6 +2162,8 @@ class DiskService(
                 ),
                 "path": "$",
             }
+        if session.kind == "iso":
+            return self.iso_listing(session, inner)
         if session.kind == "dms":
             dms = self._dms(session)
             if inner not in {"", "$"}:
@@ -2407,6 +2437,19 @@ class DiskService(
             return {
                 "available": False,
                 "reason": "DMS images do not have a fixed free-space capacity.",
+            }
+        if session.kind == "iso":
+            # A CD is full by definition and cannot be written to, so the
+            # useful number is how much of the disc holds data rather than how
+            # much is left, which would always be none.
+            total = session.path.stat().st_size
+            return {
+                "available": True,
+                "unit": "bytes",
+                "total": total,
+                "used": total,
+                "free": 0,
+                "detail": "read-only CD image",
             }
         if session.kind == "kickfs":
             return self.kickfs_details(session)["capacity"]
@@ -3586,6 +3629,8 @@ class DiskService(
     def read_file(self, session: ImageSession, inner: str, side: int | None = None) -> bytes:
         if session.kind == "rom":
             return self.rom_bank_bytes(session, inner)
+        if session.kind == "iso":
+            return self.iso_file(session, inner)
         if session.kind == "dms":
             return self._dms_file(session, inner).data
         if session.kind == "kickfs":

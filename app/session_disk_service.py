@@ -388,7 +388,15 @@ class SessionDiskMixin:
             "descriptorName": session.descriptor_name,
             "doubleSided": self.is_two_volume_image(session),
             "containerFormat": "hfe" if session.hfe_original_path else "scp" if session.scp_original_path else None,
-            "readOnly": session.hfe_read_only or session.scp_read_only or bool(kickfs and kickfs["readOnly"]),
+            # A CD is read-only by construction, so saying so here is what
+            # disables every control that would write to it, rather than each
+            # one having to know what an ISO is.
+            "readOnly": (
+                session.kind == "iso"
+                or session.hfe_read_only
+                or session.scp_read_only
+                or bool(kickfs and kickfs["readOnly"])
+            ),
             "exportFormats": self.export_formats(session),
             "rom": ({
                 "bankSize": session.rom_bank_size,

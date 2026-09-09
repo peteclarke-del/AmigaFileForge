@@ -2520,6 +2520,12 @@ Backend routes are split by responsibility:
 - `app/dms_disk_service.py` owns cached DMS access and DMS-to-ADF conversion.
 - `app/dms_codec.py` decodes every DiskMasher compression mode in-tree, ported
   from the public-domain xDMS 1.3 reference and pinned to its exact output.
+- `app/iso9660.py` reads an ISO 9660 CD image, including the Joliet and Rock
+  Ridge naming schemes and the Amiga `AS` extension that carries a file's
+  protection bits and comment. It reads from the file rather than into memory,
+  because a CD image runs to hundreds of megabytes.
+- `app/iso_disk_service.py` presents a CD as an ordinary read-only pane, so a
+  disc is browsed and copied from like any other container.
 - `app/ipf.py` loads the SPS decoder library when it is installed and turns the
   MFM bit cells it returns into AmigaDOS sectors; see
   [docs/IPF-GUIDE.md](docs/IPF-GUIDE.md).
