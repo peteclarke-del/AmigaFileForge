@@ -2520,6 +2520,10 @@ Backend routes are split by responsibility:
 - `app/dms_disk_service.py` owns cached DMS access and DMS-to-ADF conversion.
 - `app/dms_codec.py` decodes every DiskMasher compression mode in-tree, ported
   from the public-domain xDMS 1.3 reference and pinned to its exact output.
+- `app/amigaos_cd.py` recognises the AmigaOS 3.5 and 3.9 release CDs and says
+  whether a machine can run one. Neither can be installed from outside the
+  Amiga, so this checks the disc, the processor and the drive, and the
+  installation itself is left to Commodore's own script.
 - `app/iso9660.py` reads an ISO 9660 CD image, including the Joliet and Rock
   Ridge naming schemes and the Amiga `AS` extension that carries a file's
   protection bits and comment. It reads from the file rather than into memory,
