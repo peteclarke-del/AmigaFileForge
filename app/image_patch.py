@@ -13,6 +13,7 @@ from .disk_service import DiskError
 from .image_diff import compare_manifests, manifest_fingerprint, record_key
 from .ffs_items import delete_ffs_items
 from . import amiga_paths
+from . import progress as progress_module
 
 
 PATCH_FORMAT = "amiga-file-forge-image-patch"
@@ -276,7 +277,7 @@ def _validate_operation_plan(kind: str, document: dict, current: dict) -> None:
 
 
 def _preflight_patch(service, session, archive: zipfile.ZipFile, progress=None) -> tuple[dict, dict]:
-    report = progress or (lambda _message, _current=None, _total=None: None)
+    report = progress_module.reporter(progress)
     report("Reading and validating the patch plan", 0, None)
     document = _read_patch_document(archive)
     if document.get("kind") != session.kind:
@@ -363,7 +364,7 @@ def write_patch_archive(
     progress=None,
     selected_keys: list[str] | None = None,
 ) -> dict:
-    report = progress or (lambda _message, _current=None, _total=None: None)
+    report = progress_module.reporter(progress)
     report(f"Cataloguing base image {_session_label(base_session)}", 0, None)
     base = build_manifest(service, base_session, report)
     report(f"Cataloguing candidate image {_session_label(candidate_session)}", 0, None)
@@ -511,7 +512,7 @@ def _apply_normal_patch(
     archive: zipfile.ZipFile,
     progress=None,
 ) -> None:
-    report = progress or (lambda _message, _current=None, _total=None: None)
+    report = progress_module.reporter(progress)
     removal_actions = {"removed", "modified"} if session.kind == "ofs" else {"removed"}
     removals = [item for item in operations if item["action"] in removal_actions]
     removals.sort(key=lambda item: (item["before"].get("recordType") == "directory", -str(item["before"].get("path") or "").count(".")))
@@ -574,7 +575,7 @@ def _apply_normal_patch(
 
 
 def _apply_rom_patch(service, session, operations: list[dict], archive: zipfile.ZipFile, progress=None) -> None:
-    report = progress or (lambda _message, _current=None, _total=None: None)
+    report = progress_module.reporter(progress)
     removed_banks = []
     for index, operation in enumerate(operations):
         row = operation.get("after") or operation.get("before") or {}
@@ -598,7 +599,7 @@ def _apply_rom_patch(service, session, operations: list[dict], archive: zipfile.
 
 
 def apply_patch_archive(service, session, archive_path: Path, progress=None) -> dict:
-    report = progress or (lambda _message, _current=None, _total=None: None)
+    report = progress_module.reporter(progress)
     try:
         with zipfile.ZipFile(archive_path) as archive:
             document, _current = _preflight_patch(service, session, archive, report)

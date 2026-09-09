@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Callable
 
 from .errors import DiskError
 from .image_session import ImageSession
 from .amiganut_internals import file_copy_item, write_copy_item
 from . import amiga_paths
+from . import progress as progress_module
 
 
 class FFSInstallMixin:
@@ -113,11 +113,11 @@ class FFSInstallMixin:
         self,
         session: ImageSession,
         root: str = "$",
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
     ) -> dict:
         if session.kind not in {"ffs", "ofs"} or not self.summary(session)["hardDisk"]:
             raise DiskError("Installed disk auditing is available only for FFS HDD images.")
-        report = progress or (lambda _message, _current=None, _total=None: None)
+        report = progress_module.reporter(progress)
         with self.ffs_mount(session) as mount:
             if not mount.exists(root):
                 raise DiskError(f"Path not found: {root}")
@@ -160,7 +160,7 @@ class FFSInstallMixin:
         self,
         session: ImageSession,
         directories: list[str],
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
     ) -> dict:
         if session.kind not in {"ffs", "ofs"} or not self.summary(session)["hardDisk"]:
             raise DiskError("Installed disk repair is available only for FFS HDD images.")
@@ -174,7 +174,7 @@ class FFSInstallMixin:
             raise DiskError(
                 "The audit result is stale or no deterministic repair remains for: " + ", ".join(unknown)
             )
-        report = progress or (lambda _message, _current=None, _total=None: None)
+        report = progress_module.reporter(progress)
         repaired = []
         with self.ffs_mount(session) as mount:
             for offset, directory in enumerate(unique):
