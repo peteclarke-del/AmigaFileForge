@@ -5,6 +5,7 @@ window.AmigaPaneView = (() => {
       if (image.containerFormat === "scp") return "SCP";
       if (image.kind === "hdf") return "HDF";
       if (image.kind === "dms") return "DMS";
+      if (image.kind === "iso") return "CD";
       if (image.kind === "rom") return "ROM";
       if (image.kind === "kickfs") return "RFS";
       if (image.kind === "ofs") return image.name.toLowerCase().endsWith(".adz") ? "ADZ" : "ADF";
@@ -29,12 +30,18 @@ window.AmigaPaneView = (() => {
         if (path === "") return '<span class="crumb current">Catalogues</span>';
         return `<button class="crumb" data-path="">Catalogues</button><span>›</span><span class="crumb current">${esc(path)}</span>`;
       }
-      const parts = path.split(".");
-      let current = "";
-      return parts.map((part, index) => {
-        current = index ? `${current}.${part}` : part;
+      // Split on the separator AmigaDOS actually uses. A full stop is an
+      // ordinary character in an Amiga filename, so splitting on one turned
+      // a drawer named "OS-Version3.5" into two crumbs, neither of which was
+      // a real path, and neither of which navigated anywhere.
+      const parts = path.replace(/^[$:]/, "").split("/").filter(Boolean);
+      // AmigaDOS writes a volume root as a bare colon, and a bar with nothing
+      // in it gives no way back to the top.
+      const root = `<button class="crumb${parts.length ? "" : " current"}" data-path="">:</button>`;
+      return root + parts.map((part, index) => {
+        const current = parts.slice(0, index + 1).join("/");
         const klass = index === parts.length - 1 ? "crumb current" : "crumb";
-        return `<button class="${klass}" data-path="${esc(current)}">${index ? "› " : ""}${esc(part)}</button>`;
+        return `<span>›</span><button class="${klass}" data-path="${esc(current)}">${esc(part)}</button>`;
       }).join("");
     };
 
