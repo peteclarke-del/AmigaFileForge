@@ -161,11 +161,20 @@ one bundled emulator, chosen because it covers the whole Amiga range in a single
 portable build. Proven cheat findings are packaged as exact-hash guarded
 patches.
 
-A floppy can be installed onto a hard drive rather than only copied there, by
+A drive can be prepared with AmigaOS from your own Workbench floppies: point at
+the folder holding them and the disks are recognised by the volume name inside
+each image rather than by its file name, matched to one release, and copied into
+the layout the AmigaOS install script produces. No AmigaOS is shipped or
+downloaded.
+
+A floppy can then be installed onto that drive rather than only copied there, by
 staging a multi-disc set into one tree, by installing WHDLoad, or by booting the
 drive under emulation with the disc in `DF0:` so the title's own installer can
-be run. LHA archives are read in-tree, without an external decompressor.
-[docs/INSTALL-GUIDE.md](docs/INSTALL-GUIDE.md) covers all three methods and is
+be run. Staged discs are written into a drawer on the target image rather than
+into a directory on the computer running the workbench, so the install can be
+finished inside the emulator or on the real machine, with the discs already
+there. LHA archives are read in-tree, without an external decompressor.
+[docs/INSTALL-GUIDE.md](docs/INSTALL-GUIDE.md) covers every method and is
 explicit about which parts cannot be automated.
 
 ### Known limits of this build
@@ -180,6 +189,9 @@ These are stated here rather than discovered later:
   decoders are pinned byte-for-byte to the public-domain xDMS 1.3 reference.
 - **Long-filename and third-party filing systems.** `DOS\6`, `DOS\7`, `PFS\3`,
   `SFS\0` and `SFS\2` are identified and reported, but opened read-only.
+- **AmigaOS disks.** No Workbench, Extras, Fonts or Locale disk is shipped or
+  downloaded, and none can be: AmigaOS is not free to redistribute. Installing
+  Workbench needs the disk images of the release you own.
 - **WHDLoad slaves.** WHDLoad itself is installed for you from its author's
   site. The per-title slave is not, and cannot be: `whdload.de` refuses its
   game index to anything that is not a browser session, and Aminet carries no
@@ -2464,6 +2476,22 @@ Backend routes are split by responsibility:
 - `app/filesystem_disk_service.py` owns trusted AmigaDOS and Kickstart mounts.
 - `app/ffs_install_service.py` owns installed-software discovery, dry-run
   audits and deterministic loader repairs for hard drives.
+- `app/install_service.py` owns staging a title's discs into a drawer on the
+  drive they are destined for, installing a staged set into its own home, and
+  the WHDLoad install. Staging writes onto the target image rather than onto
+  this computer, so the job can be finished in an emulator or on the machine
+  itself.
+- `app/workbench_install.py` owns installing AmigaOS from the operator's own
+  Workbench floppies: recognising each disk by the volume name inside it,
+  keeping a set to one release, and copying the disks in the order that makes
+  the shared files come out right.
+- `app/volume_copy.py` is the one implementation of reading an Amiga volume and
+  copying its contents into another one. Staging and the Workbench install were
+  the same code twice and had already drifted apart in how they handled a file
+  they could not read.
+- `app/progress.py` declares the progress callback every long-running service
+  operation accepts, and the do-nothing default that eighteen modules had each
+  written out for themselves.
 - `app/disk_tools.py` owns engine and HxC process execution, timeout handling,
   JSON decoding and user-facing error cleanup.
 - `app/hardfile_geometry.py` owns RDB-less hardfile geometry, the `.geo`

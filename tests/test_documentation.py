@@ -24,12 +24,17 @@ def published_text_files() -> list[Path]:
     files.extend(sorted((ROOT / "docs").rglob("*.md")))
     files.extend(
         [
-            ROOT / "app" / "static" / "help.js",
             ROOT / "app" / "readme_service.py",
             ROOT / "app" / "deployment_service.py",
             ROOT / "app" / "workflow_recipe.py",
         ]
     )
+    # Every word the interface puts on screen is published text too. Listing
+    # help.js alone let an em-dash into a dialog label in app.js, because the
+    # prose people actually read is spread across the whole frontend rather
+    # than gathered in the handbook.
+    files.extend(sorted((ROOT / "app" / "static").glob("*.js")))
+    files.append(ROOT / "app" / "static" / "index.html")
     return files
 
 

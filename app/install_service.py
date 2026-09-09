@@ -3,14 +3,21 @@
 Copying a game disk into an HDF gives you the files. It does not give you
 something that runs: the title still expects to be booted from DF0:, and the
 hard drive still has no idea the title exists. Closing that gap is what this
-component is for, and there are only three honest ways to do it.
+component is for, and there are only four honest ways to do it.
 
-**Staging** extracts the discs of a title into one host directory, merging a
-multi-disc set into a single tree the way an installer would see it in a
-drawer. Nothing is emulated and nothing is guessed at, so it always works and
-it is always fast. What comes out is what an operator finishes by hand, either
-into an image later or on the real machine. This is the default because it is
-the only mode that cannot half-succeed.
+**Staging** extracts the discs of a title into a drawer *on the drive being
+built*, merging a multi-disc set into a single tree the way an installer would
+see it in a drawer. Nothing is emulated and nothing is guessed at, so it always
+works and it is always fast. Putting it on the target image rather than in a
+directory on this machine is the whole point: the operator boots the drive in
+an emulator, or puts it in a real Amiga, and finishes the job there with the
+discs already in front of them. This is the default because it is the only
+mode that cannot half-succeed.
+
+**Workbench** is the one install this application can perform in full, because
+AmigaOS is installed by copying disks into known places rather than by running
+code (see ``app.workbench_install``). Given the operator's own Workbench
+floppies it prepares a drive that boots.
 
 **WHDLoad** is the right answer for most games and demos, and the program half
 of it can be installed here directly. The per-title slave cannot be fetched
@@ -33,31 +40,34 @@ stops a new entry point from quietly arriving without one.
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
 import unicodedata
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Callable
 
-from . import amiga_paths, whdload
-from .amiga_metadata import format_inf, parse_inf
+from . import amiga_paths, volume_copy, whdload
+from . import progress as progress_module
 from .errors import DiskError
 from .image_session import ImageSession
 from .lha import LHAArchive, LHAError, is_lha_bytes
 
 
-#: Where staged titles are kept. It defaults inside the working directory so a
-#: container with nothing mounted still works, and it is overridable because
-#: the whole point of staging is to end up somewhere an Amiga can reach, which
-#: on a real setup means a share or a mounted card.
-STAGING_DIRECTORY_VARIABLE = "AMIGA_INSTALL_STAGING_DIR"
+#: The drawer on the target volume that holds staged discs, unless the operator
+#: names another.
+#:
+#: ``Storage`` is where Workbench keeps what is not in use yet, which is
+#: exactly what a staged set is, and ``Storage/Install`` is where the PiStorm
+#: imager puts the same thing. The obvious alternative, a plain ``Install``
+#: drawer at the volume root, is already taken: the AmigaOS Install disk is
+#: copied there by a Workbench install, so staging into it would list that
+#: disk's own ``c`` and ``Libs`` drawers as though they were staged titles.
+DEFAULT_STAGING_PARENT = "Storage/Install"
 
-#: The staged payload lives under this name so the manifest can sit beside it
-#: without ever being copied to the Amiga along with the title.
-PAYLOAD_DIRECTORY = "files"
-MANIFEST_NAME = "manifest.json"
+#: Staging keeps its own records out of the payload drawer, because that drawer
+#: has to be exactly what gets installed. Everything belonging to this
+#: application - the manifest, and the files a later disc disagreed about -
+#: lives here instead, and the whole drawer can be deleted once a set is in.
+HOUSEKEEPING_DIRECTORY = "Forge-Staging"
+MANIFEST_NAME = "Manifest"
 
 #: Where an install puts a title inside the destination volume, unless the
 #: operator picks somewhere else. Both are the conventional Amiga drawers.
@@ -65,7 +75,6 @@ DEFAULT_WHDLOAD_PARENT = "Games"
 DEFAULT_INSTALL_PARENT = ""
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
-
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -90,161 +99,138 @@ class InstallMixin:
     # Staging
     # ------------------------------------------------------------------
 
-    def staging_root(self) -> Path:
-        root = os.environ.get(STAGING_DIRECTORY_VARIABLE, "").strip()
-        path = Path(root) if root else self.work_dir / "staging"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+    def staging_parent(self, requested: str = "") -> str:
+        """The drawer on the target volume that holds staged discs."""
+        value = str(requested or "").strip().strip(amiga_paths.SEPARATOR)
+        return amiga_paths.normalise(value) or DEFAULT_STAGING_PARENT
 
-    def _title_directory(self, slug: str) -> Path:
-        clean = slugify(slug)
-        directory = self.staging_root() / clean
-        # slugify already removes every separator, so this cannot escape the
-        # staging root. Checking anyway costs nothing and means a future
-        # change to slugify cannot quietly turn into a path traversal.
-        if directory.parent != self.staging_root():
-            raise DiskError(f"{slug} is not a valid staged title name.")
-        return directory
+    def _housekeeping_drawer(self, staging: str, leaf: str = "") -> str:
+        """Where the record of a staging run lives, away from the payload.
 
-    @staticmethod
-    def _read_manifest(directory: Path) -> dict:
+        The payload drawer has to be exactly what gets installed, so nothing
+        belonging to this application may sit inside it. Everything that is
+        bookkeeping, the manifest and the files a later disc disagreed about,
+        goes here instead, in one drawer the operator can delete once the
+        title is in place.
+        """
+        base = amiga_paths.join(staging, HOUSEKEEPING_DIRECTORY)
+        return amiga_paths.join(base, leaf) if leaf else base
+
+    def _staging_paths(
+        self, target: ImageSession, title: str, parent: str
+    ) -> tuple[str, str, str]:
+        """The three places a staged title occupies, worked out in one place.
+
+        Every entry point needs the same trio and they have to agree: the
+        payload drawer that gets installed, the housekeeping drawer beside it,
+        and the legal Amiga leaf name both are built from.
+        """
+        staging = self.staging_parent(parent)
+        leaf = self.validate_leaf_name(target, str(title or "").strip())
+        return staging, leaf, amiga_paths.join(staging, leaf)
+
+    def _read_staged_manifest(self, target: ImageSession, staging: str, leaf: str) -> dict:
+        drawer = self._housekeeping_drawer(staging, leaf)
+        if not volume_copy.drawer_exists(self, target, drawer):
+            return {}
         try:
-            return json.loads((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            return json.loads(
+                self.read_file(target, amiga_paths.join(drawer, MANIFEST_NAME)).decode("utf-8")
+            )
+        except Exception:
+            # A record that cannot be read is a record that is not there. The
+            # payload on the drive is the authority, and a staged set has to
+            # stay usable when its notes are damaged or were never written.
             return {}
 
-    @staticmethod
-    def _write_manifest(directory: Path, manifest: dict) -> None:
-        """Replace the manifest atomically.
+    def _write_staged_manifest(
+        self, target: ImageSession, staging: str, leaf: str, manifest: dict
+    ) -> None:
+        """Record what was staged, on the drive itself.
 
-        Staging a multi-disc set writes this once per disc. A half-written
-        manifest would strand the discs already staged, with the files present
-        and nothing recording what they are.
+        Keeping this on the image rather than on the host is what lets a drive
+        be carried to another machine, or to a real Amiga, and still describe
+        the set that is waiting on it. It is written into the housekeeping
+        drawer, so installing the title never carries it along.
         """
-        temporary = directory / f"{MANIFEST_NAME}.tmp"
-        temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(directory / MANIFEST_NAME)
+        body = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        volume_copy.write_file(
+            self, target,
+            amiga_paths.join(self._housekeeping_drawer(staging, leaf), MANIFEST_NAME),
+            body,
+        )
 
-    def _volume_name(self, session: ImageSession) -> str:
-        """The name AmigaDOS shows for this volume, not the host file's name."""
-        try:
-            return str(self.list_directory(session, amiga_paths.ROOT).get("title") or session.name)
-        except DiskError:
-            return session.name
-
-    def _walk_image(self, session: ImageSession, directory: str = amiga_paths.ROOT) -> list[dict]:
-        """List every file on a volume, deepest paths last.
-
-        ``list_directory`` is used rather than a mount so this works the same
-        for an ADF, a DMS still in its archive, and a partition of a drive.
-        """
-        collected: list[dict] = []
-        pending = [directory]
-        while pending:
-            current = pending.pop(0)
-            listing = self.list_directory(session, current)
-            for entry in listing.get("entries", []):
-                path = str(entry.get("path") or amiga_paths.join(current, entry.get("name", "")))
-                if entry.get("type") == "dir":
-                    collected.append({"path": path, "directory": True})
-                    pending.append(path)
-                    continue
-                collected.append({
-                    "path": path,
-                    "directory": False,
-                    "length": int(entry.get("length") or 0),
-                    "protection": entry.get("protection"),
-                    "comment": str(entry.get("comment") or ""),
-                    "filetype": str(entry.get("filetype") or ""),
-                })
-        return collected
+    def _next_disc_label(self, discs: list[dict], requested: str | None) -> str:
+        """The label this disc is filed under, named or numbered in turn."""
+        label = str(requested or "").strip()
+        if label:
+            return label
+        used = {disc["label"] for disc in discs}
+        position = 1
+        while f"Disc {position}" in used:
+            position += 1
+        return f"Disc {position}"
 
     def stage_disk(
         self,
         source: ImageSession,
+        target: ImageSession,
         title: str,
         *,
+        parent: str = "",
         disc_label: str | None = None,
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
     ) -> dict:
-        """Extract one disc into a title's staging directory.
+        """Extract one disc into a drawer on the drive it is destined for.
 
-        Discs of the same title merge into one tree, which is what an
-        installer expects to be pointed at and what a person expects to copy
-        to a real machine. Where two discs carry the same path with different
-        contents the first is kept and the later one is filed under the disc
-        it came from, so a set is never silently reduced to its last disc.
+        Staging exists so that the install can be finished where the title will
+        actually run, which means the discs have to be somewhere an Amiga can
+        reach: a drawer on the target volume, not a directory on the machine
+        running this application. An operator can then boot the drive in an
+        emulator or put it in a real machine, open the drawer and run the
+        title's own installer against it.
+
+        Discs of the same title merge into one tree, which is what an installer
+        expects to be pointed at. Where two discs carry the same path with
+        different contents the first is kept and the later one is filed in the
+        housekeeping drawer under the disc it came from, so a set is never
+        silently reduced to its last disc.
 
         Staging under a label that is already present is the one exception:
         that is a correction, not a second disc, so its files overwrite what
         the earlier attempt left behind and any conflict recorded against that
-        label is dropped. Treating it as a conflict would file the corrected
-        file away as an alternate and leave the broken one in place, which is
-        the opposite of what was asked for.
+        label is dropped.
         """
-        report = progress or (lambda _message, _current=None, _total=None: None)
-        readable = str(title or source.name or "Untitled").strip() or "Untitled"
-        slug = slugify(readable)
-        directory = self._title_directory(slug)
-        payload = directory / PAYLOAD_DIRECTORY
-        payload.mkdir(parents=True, exist_ok=True)
+        report = progress_module.reporter(progress)
+        self.require_mounted_volume(target)
+        if self.summary(target).get("readOnly"):
+            raise DiskError(f"{target.name} is open read-only, so nothing can be staged onto it.")
+        self.require_writable_geometry(target)
 
-        manifest = self._read_manifest(directory)
+        readable = str(title or source.name or "Untitled").strip() or "Untitled"
+        staging, leaf, drawer = self._staging_paths(target, readable, parent)
+
+        manifest = self._read_staged_manifest(target, staging, leaf)
         discs = list(manifest.get("discs") or [])
-        label = str(disc_label or "").strip()
-        if not label:
-            used = {disc["label"] for disc in discs}
-            position = 1
-            while f"Disc {position}" in used:
-                position += 1
-            label = f"Disc {position}"
-        alternates = directory / "alternates" / slugify(label)
+        label = self._next_disc_label(discs, disc_label)
+        alternates = amiga_paths.join(
+            self._housekeeping_drawer(staging, leaf), self.validate_leaf_name(target, label)
+        )
+        # Re-staging a disc under a label that is already there is a
+        # correction, so its files replace what the earlier attempt wrote and
+        # anything filed aside for that disc stops being true.
         replacing = any(disc["label"] == label for disc in discs)
-        if replacing:
-            shutil.rmtree(alternates, ignore_errors=True)
+        if replacing and volume_copy.drawer_exists(self, target, alternates):
+            volume_copy.delete_tree(self, target, alternates)
 
         report(f"Reading {source.name}", 0, None)
-        entries = self._walk_image(source)
-        files = [entry for entry in entries if not entry["directory"]]
-        written = 0
-        total_bytes = 0
-        conflicts: list[dict] = []
-        replaced_paths: set[str] = set()
-
-        for index, entry in enumerate(entries):
-            relative = amiga_paths.normalise(entry["path"])
-            if not relative:
-                continue
-            report(f"Staging {relative}", index, len(entries))
-            destination = payload / Path(*amiga_paths.split(relative))
-            if entry["directory"]:
-                destination.mkdir(parents=True, exist_ok=True)
-                continue
-            data = self.read_file(source, entry["path"])
-            if destination.exists() and not replacing:
-                if destination.read_bytes() == data:
-                    continue
-                # Same name, different bytes: both discs are kept, because
-                # which one an installer wants is not knowable from here.
-                spare = alternates / Path(*amiga_paths.split(relative))
-                spare.parent.mkdir(parents=True, exist_ok=True)
-                spare.write_bytes(data)
-                conflicts.append({
-                    "path": relative,
-                    "keptFrom": next(
-                        (disc["label"] for disc in discs if relative in disc.get("paths", [])),
-                        discs[0]["label"] if discs else label,
-                    ),
-                    "alsoIn": label,
-                    "storedAs": str(spare.relative_to(directory)),
-                })
-                continue
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(data)
-            self._write_sidecar(destination, relative, entry)
-            written += 1
-            total_bytes += len(data)
-            replaced_paths.add(relative)
+        copied = volume_copy.copy_volume_tree(
+            self, source, target, drawer,
+            existing="replace" if replacing else "divert",
+            divert_to=alternates,
+            progress=report,
+            message="Staging",
+        )
 
         summary = self.summary(source)
         record = {
@@ -253,174 +239,201 @@ class InstallMixin:
             # The volume name is what an installer and an operator both
             # recognise a disc by, and it is a property of the filing system
             # rather than of the file the image happens to be stored in.
-            "volume": self._volume_name(source),
+            "volume": volume_copy.volume_name(self, source),
             "format": str(summary.get("kind") or source.kind),
             "bootable": bool(summary.get("bootable")),
-            "files": written,
-            "bytes": total_bytes,
+            "files": copied.file_count,
+            "bytes": copied.bytes_written,
             "added": _now(),
-            "paths": [amiga_paths.normalise(entry["path"]) for entry in files],
+            "paths": sorted(set(copied.written) | set(copied.skipped) | set(copied.diverted)),
         }
-        # Staging a disc under a label that is already present replaces it.
-        # Somebody re-staging Disk 1 after fixing it has one Disk 1, not two,
-        # and a set that silently grew every time it was corrected would be
+        # Somebody re-staging Disk 1 after fixing it has one Disk 1, not two.
+        # A set that silently grew every time it was corrected would be
         # impossible to reason about by the time it was installed.
-        existing = next(
-            (position for position, disc in enumerate(discs) if disc["label"] == label), None
+        position = next(
+            (offset for offset, disc in enumerate(discs) if disc["label"] == label), None
         )
-        if existing is None:
+        if position is None:
             discs.append(record)
         else:
-            discs[existing] = record
+            discs[position] = record
+
+        earlier = {disc["label"] for disc in discs if disc["label"] != label}
+        conflicts = [
+            {
+                "path": path,
+                "keptFrom": next(
+                    (disc["label"] for disc in discs if path in disc.get("paths", [])
+                     and disc["label"] in earlier),
+                    sorted(earlier)[0] if earlier else label,
+                ),
+                "alsoIn": label,
+                "storedAs": amiga_paths.join(alternates, path),
+            }
+            for path in copied.diverted
+        ]
         # A conflict is only still true if the file it named is still the one
         # on disk. Restaging a disc rewrites its files, so anything recorded
         # against this label, or against a path this disc has just replaced,
         # is stale and would otherwise be reported for ever.
+        rewritten = set(copied.written)
         carried = [
             conflict
             for conflict in (manifest.get("conflicts") or [])
-            if conflict.get("alsoIn") != label and conflict.get("path") not in replaced_paths
+            if conflict.get("alsoIn") != label and conflict.get("path") not in rewritten
         ]
         manifest.update({
             "title": readable,
-            "slug": slug,
+            "name": leaf,
+            "slug": slugify(readable),
+            "parent": staging,
             "created": manifest.get("created") or _now(),
             "updated": _now(),
             "discs": discs,
             "conflicts": carried + conflicts,
         })
-        self._write_manifest(directory, manifest)
-        report("Staged", len(entries), len(entries))
-        return self._staged_summary(directory, manifest)
+        self._write_staged_manifest(target, staging, leaf, manifest)
+        self._persist_session(target)
+        report("Staged", 1, 1)
+        staged = self._staged_summary(target, staging, leaf, manifest)
+        staged["warnings"] = copied.warnings
+        return staged
 
-    @staticmethod
-    def _write_sidecar(destination: Path, relative: str, entry: dict) -> None:
-        """Record protection bits and the comment beside the staged file.
-
-        A host filesystem has nowhere to put either, and both matter: a title
-        whose loader is missing its ``e`` bit will not start. The sidecar is
-        the same one this application already writes on export and reads on
-        import, so a staged tree can be brought back in without loss.
-        """
-        if entry.get("protection") is None and not entry.get("comment"):
-            return
-        sidecar = destination.with_name(destination.name + ".inf")
-        sidecar.write_text(
-            format_inf(relative, {
-                "protection": entry.get("protection"),
-                "length": entry.get("length"),
-                "comment": entry.get("comment"),
-            }),
-            encoding="latin-1",
+    def _staged_summary(
+        self, target: ImageSession, staging: str, leaf: str, manifest: dict | None = None
+    ) -> dict:
+        manifest = (
+            manifest if manifest is not None
+            else self._read_staged_manifest(target, staging, leaf)
         )
-
-    def _staged_summary(self, directory: Path, manifest: dict | None = None) -> dict:
-        manifest = manifest if manifest is not None else self._read_manifest(directory)
+        drawer = amiga_paths.join(staging, leaf)
         discs = list(manifest.get("discs") or [])
-        payload = directory / PAYLOAD_DIRECTORY
+        if discs:
+            file_count = sum(int(disc.get("files") or 0) for disc in discs)
+            total_bytes = sum(int(disc.get("bytes") or 0) for disc in discs)
+        else:
+            # A drawer somebody made by hand, or one whose record was deleted,
+            # is still a staged title. Measuring it is better than hiding it.
+            staged_files = [
+                entry for entry in volume_copy.walk_volume(self, target, drawer)
+                if not entry["directory"]
+            ]
+            file_count = len(staged_files)
+            total_bytes = sum(int(entry.get("length") or 0) for entry in staged_files)
         return {
-            "slug": str(manifest.get("slug") or directory.name),
-            "title": str(manifest.get("title") or directory.name),
-            "path": str(payload),
+            "name": leaf,
+            "slug": str(manifest.get("slug") or slugify(leaf)),
+            "title": str(manifest.get("title") or leaf),
+            "path": drawer,
+            "parent": staging,
             "discs": [
                 {key: value for key, value in disc.items() if key != "paths"}
                 for disc in discs
             ],
             "discCount": len(discs),
-            "fileCount": sum(int(disc.get("files") or 0) for disc in discs),
-            "bytes": sum(int(disc.get("bytes") or 0) for disc in discs),
+            "fileCount": file_count,
+            "bytes": total_bytes,
             "conflicts": list(manifest.get("conflicts") or []),
+            "warnings": [],
             "created": str(manifest.get("created") or ""),
             "updated": str(manifest.get("updated") or ""),
         }
 
-    def staged_titles(self) -> list[dict]:
-        """Every title waiting to be installed, most recently touched first."""
-        root = self.staging_root()
-        titles = [
-            self._staged_summary(child)
-            for child in sorted(root.iterdir())
-            if child.is_dir() and (child / MANIFEST_NAME).is_file()
-        ]
-        return sorted(titles, key=lambda item: item["updated"], reverse=True)
+    def staged_titles(self, target: ImageSession, *, parent: str = "") -> list[dict]:
+        """Every title waiting on this drive, most recently touched first.
 
-    def discard_staged_title(self, slug: str) -> None:
-        directory = self._title_directory(slug)
-        if not directory.is_dir():
-            raise DiskError(f"There is no staged title called {slug}.")
-        shutil.rmtree(directory)
+        The list is read off the volume rather than out of a record kept here,
+        so a drive built somewhere else, or one whose manifest was deleted,
+        still reports what is sitting in its staging drawer.
+        """
+        self.require_mounted_volume(target)
+        staging = self.staging_parent(parent)
+        if not volume_copy.drawer_exists(self, target, staging):
+            return []
+        listing = self.list_directory(target, staging)
+        titles = [
+            self._staged_summary(target, staging, str(entry.get("name") or ""))
+            for entry in listing.get("entries", [])
+            if entry.get("type") == "dir"
+            and str(entry.get("name") or "").casefold() != HOUSEKEEPING_DIRECTORY.casefold()
+        ]
+        return sorted(titles, key=lambda item: (item["updated"], item["name"]), reverse=True)
+
+    def discard_staged_title(self, target: ImageSession, name: str, *, parent: str = "") -> None:
+        """Remove a staged title from the drive, payload and record together."""
+        self.require_mounted_volume(target)
+        staging, leaf, drawer = self._staging_paths(target, name, parent)
+        if not volume_copy.drawer_exists(self, target, drawer):
+            raise DiskError(f"There is no staged title called {leaf} in {staging}.")
+        volume_copy.delete_tree(self, target, drawer)
+        housekeeping = self._housekeeping_drawer(staging, leaf)
+        if volume_copy.drawer_exists(self, target, housekeeping):
+            volume_copy.delete_tree(self, target, housekeeping)
+        self._persist_session(target)
 
     def install_staged_title(
         self,
         target: ImageSession,
-        slug: str,
+        name: str,
         *,
         parent: str = DEFAULT_INSTALL_PARENT,
+        staging: str = "",
         drawer: str | None = None,
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
     ) -> dict:
-        """Write a staged title into a volume, under its own drawer.
+        """Move a staged title out of the staging drawer into its own home.
 
-        The staged tree carries its sidecars, so this restores the protection
-        bits and comments the floppy had. Loaders are repaired afterwards by
-        the same pass that repairs a plain copy, because a title moved off
-        DF0: has the same problem however it got there.
+        Both ends are on the same volume, so this is a move rather than a copy:
+        the protection bits, comments and datestamps the discs carried are the
+        ones already written, and nothing is read or written twice. Loaders are
+        repaired afterwards by the same pass that repairs a plain copy, because
+        a title moved off DF0: has the same problem however it got there.
         """
-        self.require_mounted_volume(target)
-        directory = self._title_directory(slug)
-        manifest = self._read_manifest(directory)
-        if not manifest:
-            raise DiskError(f"There is no staged title called {slug}.")
-        payload = directory / PAYLOAD_DIRECTORY
-        readable = str(manifest.get("title") or slug)
-        leaf = self.validate_leaf_name(target, str(drawer or "").strip() or readable)
-        destination = amiga_paths.join(parent, leaf)
-        report = progress or (lambda _message, _current=None, _total=None: None)
+        from .ffs_items import move_ffs_items
 
-        items = self._staged_items(payload)
-        if not items:
+        self.require_mounted_volume(target)
+        self.require_writable_geometry(target)
+        staging_parent, leaf, source = self._staging_paths(target, name, staging)
+        if not volume_copy.drawer_exists(self, target, source):
+            raise DiskError(f"There is no staged title called {leaf} in {staging_parent}.")
+
+        manifest = self._read_staged_manifest(target, staging_parent, leaf)
+        readable = str(manifest.get("title") or leaf)
+        target_leaf = self.validate_leaf_name(target, str(drawer or "").strip() or leaf)
+        destination = amiga_paths.join(parent, target_leaf)
+        if destination.casefold() == source.casefold():
+            raise DiskError(f"{readable} is already installed at {destination}.")
+        if volume_copy.drawer_exists(self, target, destination):
+            raise DiskError(f"{destination} already exists. Choose another drawer name.")
+
+        report = progress_module.reporter(progress)
+        report(f"Installing {readable}", 0, None)
+        staged_files = [
+            entry for entry in volume_copy.walk_volume(self, target, source)
+            if not entry["directory"]
+        ]
+        if not staged_files:
             raise DiskError(f"{readable} has no staged files to install.")
-        report(f"Installing {readable}", 0, len(items))
-        self.put_host_tree(target, destination, items, preserve_directories=True)
+        if parent:
+            for part in amiga_paths.split(parent):
+                self.validate_leaf_name(target, part)
+            if not volume_copy.drawer_exists(self, target, parent):
+                self.make_directory(target, parent)
+        move_ffs_items(self, target, [{"source": source, "destination": destination}])
         repairs, warnings = self._repair_copied_ffs_loaders(target, destination)
+        housekeeping = self._housekeeping_drawer(staging_parent, leaf)
+        if volume_copy.drawer_exists(self, target, housekeeping):
+            volume_copy.delete_tree(self, target, housekeeping)
         self._persist_session(target)
-        report("Installed", len(items), len(items))
+        report("Installed", len(staged_files), len(staged_files))
         return {
             "path": destination,
             "title": readable,
-            "fileCount": len(items),
+            "name": target_leaf,
+            "fileCount": len(staged_files),
             "repairs": repairs,
             "warnings": warnings,
         }
-
-    @staticmethod
-    def _staged_items(payload: Path) -> list[dict]:
-        """Turn a staged tree into the import batch the volume writer takes.
-
-        The sidecars written during staging are read back here rather than
-        being copied across as files of their own: their whole purpose is to
-        put the protection bits and comment back on the entry they describe.
-        """
-        items: list[dict] = []
-        for path in sorted(payload.rglob("*")):
-            if not path.is_file() or path.name.endswith(".inf"):
-                continue
-            relative = path.relative_to(payload)
-            metadata: dict = {}
-            sidecar = path.with_name(path.name + ".inf")
-            if sidecar.is_file():
-                parsed = parse_inf(sidecar.read_bytes())
-                if parsed:
-                    metadata = {
-                        "protection": parsed["protection"],
-                        "comment": parsed["comment"],
-                    }
-            items.append({
-                "targetPath": amiga_paths.SEPARATOR.join(relative.parts),
-                "hostPath": path,
-                "metadata": metadata,
-            })
-        return items
 
     # ------------------------------------------------------------------
     # WHDLoad
@@ -450,7 +463,7 @@ class InstallMixin:
         source: str,
         url: str,
         keep_preferences: bool = True,
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
     ) -> dict:
         """Put the WHDLoad program into a volume's ``C:`` and ``S:``.
 
@@ -462,7 +475,7 @@ class InstallMixin:
         if not self.mountable(target):
             raise DiskError("WHDLoad can only be installed into an AmigaDOS volume.")
         release = whdload.read_release(data, source, url)
-        report = progress or (lambda _message, _current=None, _total=None: None)
+        report = progress_module.reporter(progress)
 
         with self.ffs_mount(target) as mount:
             existing = whdload.detect(mount)
@@ -552,10 +565,10 @@ class InstallMixin:
 
 __all__ = [
     "DEFAULT_INSTALL_PARENT",
+    "DEFAULT_STAGING_PARENT",
     "DEFAULT_WHDLOAD_PARENT",
+    "HOUSEKEEPING_DIRECTORY",
     "MANIFEST_NAME",
-    "PAYLOAD_DIRECTORY",
-    "STAGING_DIRECTORY_VARIABLE",
     "InstallMixin",
     "slugify",
 ]

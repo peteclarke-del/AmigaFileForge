@@ -312,7 +312,13 @@ window.AmigaUI = (() => {
       if (event.submitter?.value === "cancel") return;
       event.preventDefault();
       modal.classList.remove("failed");
-      const formData = new FormData(form);
+      // The button that submitted has to be part of the form data. A dialog
+      // that decides between two outcomes does it with a named submit button
+      // -- the import review's "Continue" is name="action" value="continue" --
+      // and `new FormData(form)` on its own leaves the submitter out, so that
+      // choice read back as null and every import was silently abandoned at
+      // the review step.
+      const formData = new FormData(form, event.submitter);
       const controls = [...form.elements];
       const disabledBeforeSubmit = controls.map(control => control.disabled);
       controls.forEach(control => {
@@ -352,5 +358,129 @@ window.AmigaUI = (() => {
     return closed;
   }
 
-  return { api, uploadApi, esc, humanSize, modal, modalContent, setModalAbort, setModalProgress, showModal, toast, trapFocus };
+  //  Asking a question, warning about something and asking for one value are
+  //  the three dialogs the browser provides natively, and native ones cannot
+  //  be styled, cannot be themed, ignore the application's typography and
+  //  block the page while they are up. They also cannot be told apart from a
+  //  dialog raised by a web page pretending to be the operating system, which
+  //  is exactly the wrong impression for a tool that writes to disk images.
+  //
+  //  The three below replace them. They layer over an open <dialog> when there
+  //  is one and over the page when there is not, so the same call works from a
+  //  pane, from inside a modal and from inside the file editor. That last case
+  //  is why the editor reached for the native ones in the first place: a
+  //  second <dialog> cannot be opened over one that is already showing.
+
+  //  The id every overlay dialog's heading carries, and what its card is
+  //  labelled by for a screen reader.
+  const OVERLAY_TITLE_ID = "overlay-dialog-title";
+
+  function overlayDialog(body, { onOpen = null } = {}) {
+    return new Promise(resolve => {
+      const shade = document.createElement("div");
+      //  Always sized to the viewport, never to whatever it was appended to.
+      //  A dialog is only as tall as its own content, so an overlay laid out
+      //  inside a short one was centred in a box smaller than itself and had
+      //  its heading cut off the top.
+      shade.className = "editor-choice-shade overlay-dialog-shade";
+      shade.setAttribute("role", "dialog");
+      shade.setAttribute("aria-modal", "true");
+      shade.innerHTML = body;
+      if (shade.querySelector(`#${OVERLAY_TITLE_ID}`)) {
+        shade.setAttribute("aria-labelledby", OVERLAY_TITLE_ID);
+      }
+      const previous = document.activeElement;
+      const finish = value => {
+        shade.remove();
+        // Focus goes back where it came from, so a keyboard user is not
+        // dropped at the top of the document after every question.
+        if (previous && previous.isConnected) previous.focus();
+        resolve(value);
+      };
+      shade.addEventListener("keydown", event => {
+        if (event.key === "Escape") { event.preventDefault(); finish(null); }
+        trapFocus(shade, event);
+      });
+      //  An open <dialog> paints in the browser's top layer, above everything
+      //  the page can put on it, so an overlay that has to sit over one has to
+      //  be inside it. With nothing open, the page itself is the host.
+      (modal.open ? modal : document.body).append(shade);
+      // Every dialog built on this answers with one of a set of named
+      // outcomes, so the buttons carrying them are wired here rather than by
+      // each caller in turn.
+      shade.querySelectorAll("[data-choice]").forEach(button => {
+        button.onclick = () => finish(button.dataset.choice);
+      });
+      onOpen?.(shade, finish);
+      const preferred = shade.querySelector("[autofocus], input, textarea, select")
+        || shade.querySelector(".modal-actions .button.primary, .modal-actions .button.danger")
+        || shade.querySelector("button");
+      preferred?.focus();
+      if (preferred?.select) preferred.select();
+    });
+  }
+
+  const dialogHeading = (title, message, extra = "") => `
+    <h2 id="${OVERLAY_TITLE_ID}">${esc(title)}</h2>
+    ${message ? `<p>${esc(message)}</p>` : ""}${extra}`;
+
+  /** Ask a yes/no question. Resolves true only for the confirming button. */
+  function confirmChoice(title, message, {
+    confirmLabel = "Continue", cancelLabel = "Cancel", danger = false, note = "",
+  } = {}) {
+    const body = `<section class="editor-choice-card overlay-dialog">
+      ${dialogHeading(title, message, note ? `<div class="help-note">${esc(note)}</div>` : "")}
+      <div class="modal-actions">
+        <button type="button" class="button ghost" data-choice="cancel">${esc(cancelLabel)}</button>
+        <button type="button" class="button ${danger ? "danger" : "primary"}" data-choice="confirm">${esc(confirmLabel)}</button>
+      </div></section>`;
+    return overlayDialog(body).then(value => value === "confirm");
+  }
+
+  /** State something the operator has to acknowledge. Resolves when dismissed. */
+  function alertNotice(title, message, { confirmLabel = "Close", danger = false } = {}) {
+    const body = `<section class="editor-choice-card overlay-dialog${danger ? " overlay-dialog-danger" : ""}">
+      ${dialogHeading(title, message)}
+      <div class="modal-actions">
+        <button type="button" class="button primary" data-choice="ok">${esc(confirmLabel)}</button>
+      </div></section>`;
+    return overlayDialog(body).then(() => undefined);
+  }
+
+  /** Ask for one value. Resolves to the trimmed text, or null if cancelled. */
+  function promptValue(title, label, {
+    value = "", message = "", placeholder = "", confirmLabel = "Continue",
+    maxlength = 0, pattern = "", note = "", required = true, trim = true,
+  } = {}) {
+    const field = `<div class="field"><label for="overlay-dialog-input">${esc(label)}</label>
+      <input id="overlay-dialog-input" name="value" value="${esc(value)}"
+        ${placeholder ? `placeholder="${esc(placeholder)}"` : ""}
+        ${maxlength ? `maxlength="${maxlength}"` : ""}
+        ${pattern ? `pattern="${esc(pattern)}"` : ""}
+        ${required ? "required" : ""} autocomplete="off" spellcheck="false"></div>
+      ${note ? `<div class="help-note">${esc(note)}</div>` : ""}`;
+    const body = `<form class="editor-choice-card overlay-dialog">
+      ${dialogHeading(title, message, field)}
+      <div class="modal-actions">
+        <button type="button" class="button ghost" data-choice="cancel">Cancel</button>
+        <button type="submit" class="button primary">${esc(confirmLabel)}</button>
+      </div></form>`;
+    return overlayDialog(body, {
+      onOpen: (shade, finish) => {
+        // The card is the form here, so submitting it is the confirming
+        // action and Enter in the field works without a handler of its own.
+        //
+        // The answer is wrapped rather than returned bare, because the shared
+        // buttons answer with their own names: somebody typing "cancel" into
+        // the field would otherwise be read as having cancelled.
+        shade.querySelector("form.overlay-dialog").addEventListener("submit", event => {
+          event.preventDefault();
+          const entered = shade.querySelector('[name="value"]').value;
+          finish({ entered: trim ? entered.trim() : entered });
+        });
+      },
+    }).then(answer => (answer && typeof answer === "object" ? answer.entered : null));
+  }
+
+  return { alertNotice, api, uploadApi, confirmChoice, esc, humanSize, modal, modalContent, overlayDialog, promptValue, setModalAbort, setModalProgress, showModal, toast, trapFocus };
 })();

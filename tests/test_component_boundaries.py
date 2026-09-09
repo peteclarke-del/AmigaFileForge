@@ -14,6 +14,7 @@ from app.filesystem_disk_service import FilesystemDiskMixin
 from app.rom_disk_service import RomDiskMixin
 from app.session_disk_service import SessionDiskMixin
 from app.dms_disk_service import DMSDiskMixin
+from app.workbench_install import WorkbenchInstallMixin
 
 
 class ComponentBoundaryTests(unittest.TestCase):
@@ -84,6 +85,45 @@ class ComponentBoundaryTests(unittest.TestCase):
         self.assertTrue(issubclass(DiskService, FFSInstallMixin))
         self.assertNotIn("audit_ffs_installations", DiskService.__dict__)
         self.assertIs(DiskService.audit_ffs_installations, FFSInstallMixin.audit_ffs_installations)
+
+    def test_workbench_installation_is_owned_by_its_component(self):
+        self.assertTrue(issubclass(DiskService, WorkbenchInstallMixin))
+        self.assertNotIn("install_workbench", DiskService.__dict__)
+        self.assertIs(DiskService.install_workbench, WorkbenchInstallMixin.install_workbench)
+
+    def test_copying_a_volume_into_another_has_one_implementation(self):
+        """Staging and the Workbench install were the same code twice.
+
+        They were written separately, came out almost identical, and had
+        already drifted: one warned about a file it could not read and carried
+        on, the other raised and threw away everything it had copied. The
+        shared component is what stops that happening again, so both callers
+        are required to go through it rather than walk and write themselves.
+        """
+        app = Path(__file__).parents[1] / "app"
+        for module in ("install_service.py", "workbench_install.py"):
+            source = (app / module).read_text(encoding="utf-8")
+            with self.subTest(module=module):
+                self.assertIn("volume_copy.copy_volume_tree", source)
+                # Reading a volume, writing the batch and spilling files to
+                # host temporaries all belong to the shared component.
+                self.assertNotIn("put_host_tree", source)
+                self.assertNotIn("NamedTemporaryFile", source)
+
+    def test_the_progress_callback_contract_is_declared_once(self):
+        """Eighteen files each wrote out the same do-nothing callback."""
+        app = Path(__file__).parents[1] / "app"
+        offenders = [
+            path.relative_to(app).as_posix()
+            for path in app.rglob("*.py")
+            if path.name != "progress.py"
+            and (
+                "progress or (lambda" in path.read_text(encoding="utf-8")
+                or "Callable[[str, int | None, int | None], None]"
+                in path.read_text(encoding="utf-8")
+            )
+        ]
+        self.assertEqual(offenders, [])
 
     def test_byte_checksums_have_one_canonical_implementation(self):
         app = Path(__file__).parents[1] / "app"

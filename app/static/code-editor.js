@@ -1,4 +1,16 @@
 window.AmigaCodeEditor = (() => {
+  //  The application's own question, notice and single-value dialogs. The
+  //  editor used the browser's native ones because it runs inside a modal and
+  //  a second <dialog> cannot be opened over one; these layer over whatever is
+  //  already on screen, so the editor is no longer the one place in the
+  //  application that raises unstyled operating-system alerts.
+  //
+  //  They are looked up when they are called rather than when this file
+  //  loads, because the language analysis in here is also exercised by the
+  //  Node tests, which have no interface to take them from.
+  const alertNotice = (...args) => window.AmigaUI.alertNotice(...args);
+  const confirmChoice = (...args) => window.AmigaUI.confirmChoice(...args);
+  const promptValue = (...args) => window.AmigaUI.promptValue(...args);
   const BASIC_LANGUAGE = window.AmigaBasicLanguage;
   const ASSEMBLY_LANGUAGE = window.AmigaAssemblyLanguage;
   const CALL_CATALOGUE = window.AmigaCallCatalogue;
@@ -1521,7 +1533,7 @@ window.AmigaCodeEditor = (() => {
           return false;
         }
       }
-      if (!window.confirm(`Apply conservative whitespace formatting to ${hasSelection ? "the selected lines" : "the complete file"}?`)) return false;
+      if (!await confirmChoice("Reformat the source?", `Conservative whitespace formatting is applied to ${hasSelection ? "the selected lines" : "the complete file"}.`, { confirmLabel: "Format source", note: "Editor undo reverses it, and nothing is written to the image until you save." })) return false;
       const before = documentSnapshot();
       const selectionEnd = rangeStart + formatted.length;
       const after = { value: candidate, selectionStart: rangeStart, selectionEnd, scrollTop: textarea.scrollTop, scrollLeft: textarea.scrollLeft };
@@ -1537,14 +1549,19 @@ window.AmigaCodeEditor = (() => {
         ? `<p>${result.rows.length.toLocaleString()} code occurrence${result.rows.length === 1 ? "" : "s"}; strings and comments are excluded.</p><div class="code-reference-results">${result.rows.map(row => `<button type="button" data-code-offset="${row.offset}"><b>Line ${row.line}</b><code>${esc(row.context)}</code></button>`).join("")}</div>`
         : '<p class="code-empty-message">Place the cursor on a symbol or variable to find its references.</p>');
     };
-    const renameSymbol = () => {
+    const renameSymbol = async () => {
       if (textarea.readOnly) return;
       const result = symbolReferences(textarea.value, textarea.selectionStart, language);
-      if (!result.name || !result.rows.length) return window.alert("Place the cursor on a symbol or variable first.");
-      if (language === "basic" && BASIC_KEYWORDS.has(result.name.toUpperCase())) return window.alert("AmigaBASIC commands cannot be renamed.");
-      const replacement = window.prompt(`Rename ${result.rows.length} code occurrence${result.rows.length === 1 ? "" : "s"} of ${result.name} to:`, result.name);
+      if (!result.name || !result.rows.length) return alertNotice("Rename a symbol", "Place the cursor on a symbol or variable first.");
+      if (language === "basic" && BASIC_KEYWORDS.has(result.name.toUpperCase())) return alertNotice("Rename a symbol", `${result.name} is an AmigaBASIC command, and commands cannot be renamed.`);
+      const replacement = await promptValue(`Rename ${result.name}`, "New name", {
+        value: result.name,
+        message: `${result.rows.length} code occurrence${result.rows.length === 1 ? "" : "s"} will be renamed.`,
+        note: "Text inside strings and comments is left alone.",
+        confirmLabel: "Rename",
+        pattern: "[A-Za-z_.][A-Za-z0-9_.$%]*",
+      });
       if (!replacement || replacement === result.name || !/^[A-Za-z_.][A-Za-z0-9_.$%]*$/.test(replacement)) return;
-      if (!window.confirm(`Rename ${result.rows.length} code occurrence${result.rows.length === 1 ? "" : "s"} of ${result.name} to ${replacement}? Text inside strings and comments will not change.`)) return;
       const before = documentSnapshot();
       let updated = textarea.value;
       [...result.rows].reverse().forEach(row => { updated = `${updated.slice(0, row.offset)}${replacement}${updated.slice(row.offset + result.name.length)}`; });
@@ -1582,15 +1599,18 @@ window.AmigaCodeEditor = (() => {
         const result = await validateBasic(textarea.value, textarea.dataset.savedValue || "");
         renderDrawer("BASIC round-trip verification", `<div class="code-verification"><p class="${result.roundTripExact ? "pass" : "warn"}"><strong>${result.roundTripExact ? "Exact token round trip" : "Review required"}</strong></p><dl><dt>Lines</dt><dd>${Number(result.lineCount || 0).toLocaleString()}</dd><dt>Tokenised size</dt><dd>${Number(result.byteLength || 0).toLocaleString()} bytes</dd><dt>Destinations</dt><dd>${(result.destinations || []).length.toLocaleString()}</dd></dl>${(result.warnings || []).map(message => `<p>${esc(message)}</p>`).join("") || "<p>The listing tokenises, detokenises and reproduces identical token bytes.</p>"}</div>`);
         return result;
-      } catch (error) { window.alert(error.message || String(error)); return null; }
+      } catch (error) { await alertNotice("Round-trip verification failed", error.message || String(error), { danger: true }); return null; }
     };
     const reference = () => {
       const keys = [...new Set([...Object.keys(dictionary(language)), ...(language === "basic" ? [...BASIC_KEYWORDS] : [])])].sort();
       renderDrawer(`${languageName(language)} reference`, `<label class="code-reference-filter">Filter commands<input type="search" data-code-reference-filter placeholder="Type a command name"></label><div class="code-reference-list">${keys.map(key => `<button type="button" data-code-help="${esc(key)}">${esc(key)}</button>`).join("")}</div>`);
       drawer.querySelector("[data-code-reference-filter]")?.focus();
     };
-    const goToLine = () => {
-      const requested = prompt(language === "basic" ? "Go to AmigaBASIC line number or physical editor line:" : "Go to editor line:");
+    const goToLine = async () => {
+      const requested = await promptValue("Go to line", language === "basic" ? "AmigaBASIC line or editor line" : "Editor line", {
+        placeholder: "1", confirmLabel: "Go",
+        message: language === "basic" ? "A BASIC line number is looked for first, then the physical editor line." : "",
+      });
       if (requested == null || !requested.trim()) return;
       const number = Number.parseInt(requested, 10);
       if (!Number.isInteger(number) || number < 1) return;
@@ -1733,13 +1753,13 @@ window.AmigaCodeEditor = (() => {
       renderFolds();
       textarea.focus();
     };
-    const commitRefactor = () => {
+    const commitRefactor = async () => {
       if (!refactorPlan) return;
       const condensing = refactorPlan.mode === "condense";
       const message = condensing
         ? "Accept this condensation? The reviewed proposal will replace the selected code as one undoable operation. Safe adjacent statements will share physical lines; surviving line numbers and all explicit destinations are preserved."
         : "Accept this refactor? The reviewed proposal will now replace the program as one undoable operation. Lines will be renumbered and direct GOTO, GOSUB, RESTORE, THEN and ON GOTO/GOSUB destinations will be updated. Dynamic line-number expressions cannot be rewritten automatically.";
-      if (!window.confirm(message)) return;
+      if (!await confirmChoice("Renumber this program?", message, { confirmLabel: "Renumber", note: "Editor undo reverses it, and nothing is written to the image until you save." })) return;
       const after = refactorPlan.after;
       refactorPlan = null;
       recordRefactor(after);
@@ -1759,7 +1779,7 @@ window.AmigaCodeEditor = (() => {
       const assemblerLines = basicInlineAssemblerLines(textarea.value);
       const numberedBodies = lines.map(line => line.match(/^\s*\d+\s+(.*)$/)?.[1]).filter(body => body != null);
       if (numberedBodies.some(basicHasDynamicDestination) || numberedBodies.some(basicHasSemanticErl)) {
-        window.alert("This program uses a computed line destination or uses ERL in program logic. Refactoring would require renumbering physical lines and could change its behaviour, so the program has been left untouched.");
+        await alertNotice("The program was left untouched", "It uses a computed line destination, or uses ERL in program logic. Renumbering physical lines could change its behaviour, so no change has been made.");
         return;
       }
       const expansions = new Map();
@@ -1774,7 +1794,7 @@ window.AmigaCodeEditor = (() => {
         .map((line, index) => rebuiltAssemblerLines[index] ? line : normaliseBasicControlSpacing(line));
       const rebuilt = rebuiltLines.join("\n");
       if (rebuiltLines.some(line => Number(line.match(/^\s*(\d+)/)?.[1] || 0) > 32767)) {
-        window.alert("This program is too long to renumber in steps of 10 without exceeding line 32767.");
+        await alertNotice("Too long to renumber", "Renumbering in steps of 10 would take this program past AmigaBASIC\u2019s highest line number, 32767.");
         return;
       }
       const tokens = sourceTokens(rebuilt, language, inlineAssemblyLanguage).filter(item => item.type === "keyword").reverse();
@@ -1783,7 +1803,7 @@ window.AmigaCodeEditor = (() => {
       let verification = null;
       if (validateBasic) {
         try { verification = await validateBasic(normalised, textarea.value); }
-        catch (error) { window.alert(error.message || String(error)); return; }
+        catch (error) { await alertNotice("The transformation was not applied", error.message || String(error), { danger: true }); return; }
       }
       const newStart = rebuiltPosition(selectionStart, lines, expansions, rebuiltLines);
       const newEnd = rebuiltPosition(selectionEnd, lines, expansions, rebuiltLines);
@@ -1804,17 +1824,17 @@ window.AmigaCodeEditor = (() => {
         return match ? { index, number: Number(match[1]), body: match[2] || "", line } : null;
       });
       if (parsed.some((row, index) => lines[index].trim() && !row)) {
-        window.alert("Condense needs a complete numbered AmigaBASIC listing. Correct the unnumbered source lines first.");
+        await alertNotice("Condense needs a numbered listing", "Correct the unnumbered source lines first: condensing a partly numbered program cannot be done safely.");
         return;
       }
       const numbered = parsed.filter(Boolean);
       const assemblerLines = basicInlineAssemblerLines(textarea.value);
       if (new Set(numbered.map(row => row.number)).size !== numbered.length) {
-        window.alert("Condense cannot safely operate while BASIC line numbers are duplicated.");
+        await alertNotice("Duplicate line numbers", "Condense cannot operate safely while BASIC line numbers are duplicated. Correct them first.");
         return;
       }
       if (numbered.some(row => basicHasDynamicDestination(row.body)) || numbered.some(row => basicHasSemanticErl(row.body))) {
-        window.alert("This program uses a computed line destination or uses ERL in program logic. Removing physical line numbers could change its behaviour, so condensation has been left for manual review.");
+        await alertNotice("Left for manual review", "This program uses a computed line destination, or uses ERL in program logic. Removing physical line numbers could change its behaviour, so no change has been made.");
         return;
       }
       const range = currentPhysicalLines();
@@ -1850,9 +1870,9 @@ window.AmigaCodeEditor = (() => {
       }
       let packed;
       try { packed = await packBasic(runs); }
-      catch (error) { window.alert(error.message || String(error)); return; }
+      catch (error) { await alertNotice("The transformation was not applied", error.message || String(error), { danger: true }); return; }
       if (!Array.isArray(packed) || packed.length !== runs.length) {
-        window.alert("The BASIC line packer returned an incomplete result.");
+        await alertNotice("Condense did not complete", "The BASIC line packer returned an incomplete result, so the program has been left as it was.");
         return;
       }
       const output = [];
@@ -1882,13 +1902,13 @@ window.AmigaCodeEditor = (() => {
       });
       const value = output.join("\n");
       if (value === textarea.value) {
-        window.alert("No safely condensable physical lines were found in that selection.");
+        await alertNotice("Nothing to condense", "No physical lines in that selection can be condensed safely.");
         return;
       }
       let verification = null;
       if (validateBasic) {
         try { verification = await validateBasic(value, textarea.value); }
-        catch (error) { window.alert(error.message || String(error)); return; }
+        catch (error) { await alertNotice("The transformation was not applied", error.message || String(error), { danger: true }); return; }
       }
       const mapPosition = position => {
         let mapping = sourceMap.get(position.line);
