@@ -6,6 +6,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from . import progress as progress_module
 from .disk_service import DiskError, DiskService, ImageSession
 from .headless import create_recipe, save_image, source_identity
 from .image_patch import apply_patch_archive, write_patch_archive
@@ -106,7 +107,7 @@ def build_workflow_recipe_bundle(
             "HFE workflow recipes are not yet safe because replay would need to preserve the "
             "original track container as well as the decoded filesystem."
         )
-    report = progress or (lambda _message, _current=None, _total=None: None)
+    report = progress_module.reporter(progress)
     base_path, base_descriptor, state = _checkpoint_source(service, session)
     base = _open_snapshot(service, base_path, base_descriptor, state)
     destination = Path(destination)

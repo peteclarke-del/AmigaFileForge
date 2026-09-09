@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
+from . import progress as progress_module
 from .analysis_service import preflight_report
 from .checksum import sha256_bytes, sha256_path
 from .errors import DiskError
@@ -312,7 +313,7 @@ def _instructions(session, target: str, options: dict) -> list[str]:
 
 
 def _deployment_plan(service, session, payload: dict, progress: Callable | None = None) -> tuple[dict, list[DeploymentEntry]]:
-    report = progress or (lambda _message, _current=None, _total=None: None)
+    report = progress_module.reporter(progress)
     target = str(payload.get("target") or "").strip().lower()
     availability = {item["id"]: item for item in available_deployment_targets(service, session)}
     if target not in availability:
@@ -435,7 +436,7 @@ def deployment_readme(plan: dict) -> str:
 
 
 def build_deployment_archive(service, session, payload: dict, output: Path, progress: Callable | None = None) -> dict:
-    report = progress or (lambda _message, _current=None, _total=None: None)
+    report = progress_module.reporter(progress)
     expected = str(payload.get("expectedRevision") or "")
     live_revision = service.summary(session)["revision"]
     if expected and expected != live_revision:

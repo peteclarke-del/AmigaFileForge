@@ -14,6 +14,7 @@ from .disk_service import DiskError
 from .filename_policy import target_name_policy
 from .operations import OperationCancelled
 from . import amiga_paths
+from . import progress as progress_module
 
 
 MAX_INSPECT_BYTES = 1024 * 1024
@@ -69,7 +70,7 @@ def inspect_file(
     side: int | None,
     progress=None,
 ) -> dict:
-    report = progress or (lambda _message, _current=None, _total=None: None)
+    report = progress_module.reporter(progress)
     report(f"Reading launcher {path}", 0, None)
     exported = service.export_file(session, path, side)
     try:

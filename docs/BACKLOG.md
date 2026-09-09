@@ -116,13 +116,22 @@ project documentation. An unchecked item remains in scope.
 - [x] Feed authoritative whole-HDF emulator results back into menu health and
       STACK diagnostics.
 
-## 7. Installing a floppy onto a hard drive
+## 7. Preparing a drive and installing floppies onto it
 
 - [x] Offer installing a disc as a third choice beside copying its contents and
       storing the image, wherever the destination is a mounted volume on a hard
       drive.
-- [x] Stage a disc into a host tree, merging a multi-disc set into one location
-      and preserving protection bits and comments through sidecars.
+- [x] Install AmigaOS onto a drive from the operator's own Workbench floppies,
+      recognising each disk by the volume name inside it, keeping the set to
+      one release, and copying the disks in the order that leaves the shared
+      files correct.
+- [x] Stage a disc into a drawer on the target image rather than into a
+      directory on the machine running the application, so the install can be
+      finished in an emulator or on the real hardware, with protection bits and
+      comments written onto the volume with the files.
+- [x] Read the staged list off the drive rather than out of a record kept on
+      this machine, so a drive built elsewhere still reports what is waiting on
+      it.
 - [x] Keep both files when two discs of one set carry the same path with
       different contents, rather than reducing the set to its last disc.
 - [x] Treat restaging a disc under an existing label as a correction that
@@ -140,6 +149,11 @@ project documentation. An unchecked item remains in scope.
 - [ ] Report WHDLoad slave coverage for a staged title once a local slave
       collection can be nominated, so a set that cannot yet run says so before
       it is installed.
+- [ ] Give the drawers a Workbench install creates their own icons, so software
+      installed into them can be reached from the desktop rather than only from
+      a Shell or with Show All Files.
+- [ ] Mark a prepared partition bootable in its Rigid Disk Block. The install
+      reports when the flag is missing, but cannot yet set it.
 
 ## 8. Writable archives and DMS projects
 

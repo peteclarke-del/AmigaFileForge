@@ -1,10 +1,14 @@
-# Installing a floppy onto a hard drive
+# Preparing a hard drive and installing floppies onto it
 
 Copying a game disk into an HDF gives you the files. It does not give you
 something that runs. The title still expects to be booted from `DF0:`, and the
-hard drive still has no idea it is there. This guide covers the three ways
-Amiga File Forge closes that gap, and it is honest about what each one can and
-cannot do.
+hard drive still has no idea it is there. This guide covers the ways Amiga File
+Forge closes that gap, and it is honest about what each one can and cannot do.
+
+It starts with the drive itself. A blank partition is not a machine you can
+use, so the first section covers installing AmigaOS onto it from your own
+Workbench floppies. The rest covers getting a title onto the drive once there
+is a system there to run it.
 
 The choice appears in the import dialog whenever the pane you are dropping onto
 is a mounted AmigaDOS volume on a hard drive. Under **Import as** you get:
@@ -19,26 +23,104 @@ A floppy pane offers no install option, because a floppy has nowhere to install
 to. A drive showing its partition table offers none either: a partition table is
 not a volume. Enter a partition first.
 
+## Preparing the drive: install Workbench
+
+Choose **Tools -> Install Workbench** with a partition open, then point at the
+folder holding your Workbench floppy images, or pick the images yourself.
+
+No AmigaOS is shipped with Amiga File Forge and none is downloaded. It is not
+free to redistribute, so the disks have to be the ones you own. ADF, ADZ, DMS
+and HFE images are all read.
+
+**Disks are recognised by the volume name inside each image, not by its file
+name.** ADF collections are named inconsistently - `wb31_workbench.adf`,
+`Workbench 3.1 (Disk 2 of 6).adf`, `disk02.adf` - and a renamed file says
+nothing at all about its contents, while the volume name was written by
+Commodore and travels with the data. That is what lets you point at a folder
+rather than assembling the set by hand; anything in it that is not part of a
+release is listed as ignored rather than silently included.
+
+**The release is decided once, from the Workbench disk, and every other disk is
+matched to it.** Mixing releases is the classic way to end up with a drive that
+looks complete and boots to a Guru: a 2.0 Extras drawer on a 3.1 system, or a
+Locale disk from a release that had none, produces a system whose parts disagree
+about what the others provide. A disk from another release is left out rather
+than mixed in. Where a collection holds several dumps of the same disk, one that
+says it was verified is preferred and one that says it was modified or cracked
+is avoided.
+
+Each disk lands where the AmigaOS install script would put it:
+
+| Disk | Lands in | Notes |
+| --- | --- | --- |
+| Workbench | volume root | Required. The system itself: `C`, `L`, `Libs`, `Devs`, `S` and the desktop. |
+| Extras | volume root | Merged in after Workbench. |
+| Fonts | `Fonts` | |
+| Locale | `Locale` | AmigaOS 3.x only. |
+| Storage | `Storage` | Drivers and monitors held back until they are wanted. |
+| Classes | `Classes` | BOOPSI classes and datatypes. |
+| GlowIcons | volume root | The AmigaOS 3.5 icon set. |
+| Backdrops | `Backdrops` | |
+| Install | `Install` | Kept in its own drawer on purpose. |
+
+**The order is fixed and it matters.** Workbench is copied before Extras so that
+its full `C:`, `L:` and `Libs:` are not overwritten by the cut-down copies the
+other disks carry, and the Install disk is kept in its own drawer for the same
+reason. Only the Workbench disk is required; anything else you do not have is
+simply left out. If the automatic choice is wrong, change which disc plays each
+part before installing.
+
+`T`, `Trashcan`, `Devs/DOSDrivers` and `Prefs/Env-Archive` are created
+afterwards, because the install script makes them and no disk provides them. A
+system with no `T:` cannot write a temporary file.
+
+**Files already on the volume are left alone.** The volume is written into
+rather than formatted, so a drive you have already partitioned, named and put
+work on is added to rather than replaced, and installing twice does not undo
+hand edits made in between.
+
+A hard drive boots from the flag in its Rigid Disk Block rather than from a
+floppy boot block, so if the partition is not marked bootable the install says
+so rather than leaving you with a drive that silently will not start.
+
 ## Method 1: stage it for installing later
 
 This is the default, and for a multi-disc set it is usually the right answer.
 
-Each disc is extracted into a staging drawer named after the title. Stage the
-second disc under the same title and its files are merged into the same tree,
-which is what an installer expects to be pointed at and what you would copy to a
-real machine. Nothing is emulated, nothing is downloaded, and nothing is guessed
-at, so this mode always works and always works quickly.
+**The discs are staged onto the drive itself, in `Storage/Install/<Title>`.** That is
+the whole point of the mode. Boot the drive in an emulator, or put it in a real
+Amiga, and the material is already in front of you: you can run the title's own
+installer against the staging drawer on the machine the title will actually run
+on. A staging directory on the computer running Amiga File Forge would be
+unreachable at exactly the moment it was wanted.
+
+`Storage` is where Workbench keeps what is not in use yet, which is what a
+staged set is, and it is where the PiStorm imager puts the same thing. A plain
+`Install` drawer at the volume root would have been the obvious choice, but the
+AmigaOS Install disk is copied there by a Workbench install, and staging into
+the same drawer listed that disk's own `c` and `Libs` as though they were
+titles somebody had staged.
+
+Stage the second disc under the same title and its files are merged into the
+same tree, which is what an installer expects to be pointed at. Nothing is
+emulated, nothing is downloaded, and nothing is guessed at, so this mode always
+works and always works quickly.
 
 Where two discs carry the same path with genuinely different contents, the first
-is kept and the later one is filed under `alternates/` beside the payload. A set
-is never silently reduced to whichever disc you staged last. The staging summary
-lists every conflict so you can see what happened.
+is kept and the later one is filed under
+`Storage/Install/Forge-Staging/<Title>/<Disc>`.
+A set is never silently reduced to whichever disc you staged last. The staging
+summary lists every conflict so you can see what happened.
 
-Protection bits and comments are written beside each file in the same `.inf`
-sidecar Amiga File Forge already uses for exports, so a staged tree brought back
-in later still has them. A loader that lost its `e` bit will not start, and the
-failure looks nothing like a missing permission, so this matters more than it
-sounds.
+Nothing belonging to Amiga File Forge is put inside the payload drawer, because
+that drawer has to be exactly what gets installed. The record of what was
+staged, and the files a later disc disagreed about, both live in
+`Storage/Install/Forge-Staging`, which can be deleted once a set is in.
+
+Protection bits and comments are written onto the volume with the files, because
+an Amiga filing system has somewhere to put them. A loader that lost its `e` bit
+will not start, and the failure looks nothing like a missing permission, so this
+matters more than it sounds.
 
 Staging a disc under a label that is already there replaces it, files and all.
 Re-staging Disk 1 after correcting it leaves you with one Disk 1 holding the
@@ -47,16 +129,22 @@ dropped. A set that grew every time it was fixed, or that filed your correction
 away as an alternative to the broken file, would be impossible to reason about
 by the time you came to install it.
 
-Staged titles are kept under the working directory. Point
-`AMIGA_INSTALL_STAGING_DIR` somewhere else when you want them written straight
-to a share or a card the Amiga can reach.
+Come back to a set with **Tools -> Staged installations**, with the drive open.
+That lists every title waiting on it, what discs it holds and where its files
+are, and installs one into a drawer you name. The list is read off the drive
+rather than out of a record kept on this computer, so a drive built on another
+machine, or one whose staging notes were deleted, still reports what is sitting
+in its staging drawer.
 
-Come back to them with **Tools -> Staged installations**. That lists every
-title waiting, what discs it holds and where the files are, and installs one
-into the volume the pane has open. It also names any file that differed between
-discs, so a set that needed a judgement call says so rather than looking
-complete. Discarding a title deletes only the extracted copies; the original
-images are untouched.
+Installing moves the title out of the staging drawer into its own home on the
+same volume. Because both ends are on one drive it is a move rather than a copy:
+nothing is read or written twice, and the protection bits, comments and
+datestamps the discs carried are the ones already there. It also names any file
+that differed between discs, so a set that needed a judgement call says so
+rather than looking complete.
+
+Discarding a title deletes the staged copies from the drive. The original disc
+images are untouched, so the set can be staged again.
 
 ## Method 2: install with WHDLoad
 
@@ -102,7 +190,8 @@ Workbench you actually built. Up to four discs can be inserted at once, filling
 `DF0:` to `DF3:`, so a disc swap is a menu choice rather than a restart.
 
 Because the emulator boots the drive rather than the disc, the drive needs a
-working Workbench on it before this is useful. It also needs a Kickstart ROM for
+working Workbench on it before this is useful; see
+[Preparing the drive](#preparing-the-drive-install-workbench). It also needs a Kickstart ROM for
 the machine in your hardware profile; see the [firmware notes](../firmware/README.md).
 
 Whichever mode you choose, the disc is staged first. An install that fails
@@ -110,10 +199,11 @@ halfway has still preserved the disc's contents somewhere you can finish by hand
 
 ## What gets an undo point
 
-Installing a staged title, installing WHDLoad and placing a slave all change a
-volume, and each takes an undo checkpoint before it runs. Staging changes no
-image at all, so it takes none. Booting the emulator changes nothing Amiga File
-Forge owns.
+Staging a disc, installing a staged title, installing Workbench, installing
+WHDLoad and placing a slave all change a volume, and each takes an undo
+checkpoint before it runs. Staging now takes one too, because it writes onto the
+drive being built rather than into a directory on this computer. Booting the
+emulator changes nothing Amiga File Forge owns, so it takes none.
 
 ## Reading LHA archives
 

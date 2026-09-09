@@ -8,13 +8,14 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from . import progress as progress_module
 from .checksum import sha256_path
 from .disk_service import DiskError, DiskService, ImageSession
 from .readme_service import timestamped_archive_name, write_download_readme
 from .rom_workbench import project_json
 
 
-Progress = Callable[[str, int | None, int | None], None]
+Progress = progress_module.Progress
 PROGRESS_TOTAL = 100
 
 

@@ -1,11 +1,13 @@
 """Routes for turning a floppy into something a hard drive can run.
 
-Three modes reach an image from here and each declares what it does to one.
-Staging touches no image at all, so it is read-only as far as the undo history
-is concerned; installing a staged title, installing WHDLoad and placing a
-slave all change a volume and are declared as mutations, which is what gets
-them an undo checkpoint before they run. Booting the emulator changes nothing
-this application owns, so it is external.
+Four modes reach an image from here and each declares what it does to one.
+Staging, installing a staged title, installing Workbench, installing WHDLoad
+and placing a slave all write into a volume and are declared as mutations,
+which is what gets them an undo checkpoint before they run. Staging is a
+mutation because it now writes onto the drive being built rather than into a
+directory on this machine, which is what lets the install be finished in an
+emulator or on the real hardware. Booting the emulator changes nothing this
+application owns, so it is external.
 """
 
 from __future__ import annotations
@@ -16,8 +18,13 @@ from flask import Blueprint, jsonify, request
 
 from .. import whdload
 from ..disk_service import DiskError, DiskService
-from ..install_service import DEFAULT_INSTALL_PARENT, DEFAULT_WHDLOAD_PARENT
+from ..install_service import (
+    DEFAULT_INSTALL_PARENT,
+    DEFAULT_STAGING_PARENT,
+    DEFAULT_WHDLOAD_PARENT,
+)
 from ..lha import is_lha_bytes
+from ..workbench_install import describe_roles
 from ..operations import OperationRegistry
 from .common import apply_partition, payload
 from .effects import image_mutation, request_effect
@@ -48,14 +55,30 @@ def create_install_blueprint(service: DiskService, operations: OperationRegistry
     # Staging
     # ------------------------------------------------------------------
 
-    @blueprint.get("/api/install/staged")
-    def list_staged():
-        return jsonify(titles=service.staged_titles(), root=str(service.staging_root()))
+    @blueprint.get("/api/images/<image_id>/install/staged")
+    def list_staged(image_id):
+        """What is waiting on this drive.
 
-    @blueprint.post("/api/install/stage")
-    @request_effect("external", "extracting a disc into the staging area")
-    def stage():
+        Staging writes onto the target volume, so the list is a property of an
+        image and is read back off it. A drive built elsewhere still reports
+        what is sitting in its staging drawer.
+        """
+        session = service.get(image_id)
+        apply_partition(service, session, request.args.get("partition"))
+        parent = str(request.args.get("parent") or "")
+        return jsonify(
+            titles=service.staged_titles(session, parent=parent),
+            root=service.staging_parent(parent),
+            defaultParent=DEFAULT_STAGING_PARENT,
+        )
+
+    @blueprint.post("/api/images/<image_id>/install/stage")
+    @image_mutation("staging a disc onto a drive")
+    def stage(image_id):
+        """Extract one disc into a drawer on the drive it is destined for."""
         data = payload()
+        session = service.get(image_id)
+        apply_partition(service, session, data.get("partition"))
         source = service.get(data["sourceImage"])
         apply_partition(service, source, data.get("sourcePartition"))
         title = str(data.get("title") or "").strip()
@@ -66,17 +89,26 @@ def create_install_blueprint(service: DiskService, operations: OperationRegistry
         ) as progress:
             staged = service.stage_disk(
                 source,
+                session,
                 title or source.name,
+                parent=str(data.get("stagingParent") or ""),
                 disc_label=str(data.get("discLabel") or "").strip() or None,
                 progress=progress,
             )
-        return jsonify(staged=staged)
+        return jsonify(image=service.summary(session), staged=staged)
 
-    @blueprint.delete("/api/install/staged/<slug>")
-    @request_effect("lifecycle", "discarding a staged title")
-    def discard_staged(slug):
-        service.discard_staged_title(slug)
-        return jsonify(titles=service.staged_titles())
+    @blueprint.post("/api/images/<image_id>/install/staged/discard")
+    @image_mutation("discarding a staged title")
+    def discard_staged(image_id):
+        data = payload()
+        session = service.get(image_id)
+        apply_partition(service, session, data.get("partition"))
+        parent = str(data.get("stagingParent") or "")
+        service.discard_staged_title(session, str(data["name"]), parent=parent)
+        return jsonify(
+            image=service.summary(session),
+            titles=service.staged_titles(session, parent=parent),
+        )
 
     @blueprint.post("/api/images/<image_id>/install/staged")
     @image_mutation("installing a staged title")
@@ -91,14 +123,68 @@ def create_install_blueprint(service: DiskService, operations: OperationRegistry
         ) as progress:
             result = service.install_staged_title(
                 session,
-                str(data["slug"]),
+                str(data["name"]),
                 parent=str(data.get("parent", DEFAULT_INSTALL_PARENT)),
+                staging=str(data.get("stagingParent") or ""),
                 drawer=str(data.get("drawer") or "") or None,
                 progress=progress,
             )
-        if data.get("discard"):
-            service.discard_staged_title(str(data["slug"]))
         return jsonify(image=service.summary(session), **result)
+
+    # ------------------------------------------------------------------
+    # Workbench
+    # ------------------------------------------------------------------
+
+    @blueprint.get("/api/install/workbench/disks")
+    def workbench_disks():
+        """The disk set an install wants, so the interface can ask for it."""
+        return jsonify(roles=describe_roles())
+
+    @blueprint.post("/api/images/<image_id>/install/workbench/survey")
+    @request_effect("read-only", "identifying Workbench install discs")
+    def survey_workbench(image_id):
+        """Identify a pile of opened discs and propose a set to install from.
+
+        This changes nothing: it reads volume names out of images that are
+        already open and says what it found, so the operator can correct the
+        choice before a drive is written to.
+        """
+        data = payload()
+        session = service.get(image_id)
+        apply_partition(service, session, data.get("partition"))
+        discs = [service.get(str(identifier)) for identifier in data.get("discs") or []]
+        if not discs:
+            raise DiskError("Choose the Workbench floppy images to install from.")
+        return jsonify(
+            survey=service.survey_workbench_discs(
+                discs, version=str(data.get("version") or "")
+            ),
+        )
+
+    @blueprint.post("/api/images/<image_id>/install/workbench")
+    @image_mutation("installing Workbench")
+    def install_workbench(image_id):
+        """Copy the chosen Workbench disks into this volume."""
+        data = payload()
+        session = service.get(image_id)
+        apply_partition(service, session, data.get("partition"))
+        chosen = data.get("discs") or {}
+        if not isinstance(chosen, dict) or not chosen:
+            raise DiskError("Choose which disc plays each part before installing.")
+        discs = {str(role): service.get(str(identifier)) for role, identifier in chosen.items()}
+        with operations.tracked(
+            data.get("operationId"),
+            "Installing Workbench",
+            "Workbench installed",
+        ) as progress:
+            result = service.install_workbench(
+                session,
+                discs,
+                version=str(data.get("version") or ""),
+                create_drawers=data.get("createDrawers", True) is not False,
+                progress=progress,
+            )
+        return jsonify(image=service.summary(session), workbench=result)
 
     # ------------------------------------------------------------------
     # WHDLoad
