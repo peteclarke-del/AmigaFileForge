@@ -594,7 +594,7 @@ function rowIsPendingCut(pane, entry) {
 }
 
 function canPasteIntoPane(pane) {
-  if (!workspaceClipboard || !pane?.image || pane.image.readOnly || pane.image.kind === "dms") return false;
+  if (!workspaceClipboard || !pane?.image || pane.image.readOnly || ["dms", "iso"].includes(pane.image.kind)) return false;
   // A partition table is not a place files can be pasted; a volume always is.
   return !(pane.image.kind === "hdf" && pane.partition === null);
 }
@@ -665,6 +665,9 @@ function renderPane(index, preserveScroll = false) {
   const isPartitionIndex = pane.image.kind === "hdf" && pane.partition === null;
   const isDrive = pane.image.kind === "hdf";
   const isDMS = pane.image.kind === "dms";
+  //: A CD is read-only by nature, so it offers browsing and copying out and
+  //: none of the controls that would write to it.
+  const isIso = pane.image.kind === "iso";
   const isRom = pane.image.kind === "rom";
   const isKickfs = pane.image.kind === "kickfs";
   const isFfsHdd = pane.image.kind === "ffs" && pane.image.hardDisk;
@@ -1277,7 +1280,7 @@ function refreshSelectionDisplay(index) {
   disable(".inspect-file", !hasInspectableSelection);
   disable(".inspect-dependencies", !hasInspectableSelection);
   const clipboardSelection = clipboardItemsForPane(index);
-  disable(".clipboard-cut-action", !clipboardSelection.length || pane.image.readOnly || pane.image.kind === "dms");
+  disable(".clipboard-cut-action", !clipboardSelection.length || pane.image.readOnly || ["dms", "iso"].includes(pane.image.kind));
   disable(".clipboard-copy-action", !clipboardSelection.length);
   disable(".clipboard-paste-action", !canPasteIntoPane(pane));
 
@@ -1697,7 +1700,7 @@ function chooseImage(index) {
   let selection = { files: [] };
   showModal(`
     <h2>Open a media image</h2>
-    <p>Choose a disk, dms, ROM or matching image set, such as an HDA with its GEO descriptor. ZIP distributions are also supported.</p>
+    <p>Choose a disk, CD, dms, ROM or matching image set, such as an HDA with its GEO descriptor. ZIP distributions are also supported.</p>
     <div class="field"><label>Image file</label>
       <input type="file" name="images" accept="${esc(formats.accept)}" multiple>
       <div class="file-selection-summary" data-selected-files aria-live="polite"></div>
