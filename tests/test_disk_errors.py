@@ -845,6 +845,25 @@ ValueError: A concise engine failure"""
 
         self.assertIn("matching GEO", DiskService._friendly_engine_error(message))
 
+    def test_a_disc_that_boots_its_own_system_is_not_called_damaged(self) -> None:
+        """An Amiga boot block does not promise an AmigaDOS filing system.
+
+        Amiga UNIX install discs carry a boot block that chain-loads the UNIX
+        bootstrap, and nothing else an Amiga can read. Reporting them as
+        unformatted or damaged sends somebody looking for a fault in a dump
+        that is perfectly good.
+        """
+        message = (
+            "The volume has an AmigaDOS boot block but no readable root block. "
+            "It is unformatted, truncated or damaged."
+        )
+
+        friendly = DiskService._friendly_engine_error(message)
+
+        self.assertIn("boots an operating system of its own", friendly)
+        self.assertIn("Amiga UNIX", friendly)
+        self.assertIn("hex editor", friendly)
+
     def test_descriptorless_dat_is_not_writable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "scsi0.hda"

@@ -2576,6 +2576,13 @@ function pickHostFiles({ directory = false, accept = "" } = {}) {
     if (directory) {
       input.setAttribute("webkitdirectory", "");
       input.setAttribute("directory", "");
+      // The Linux desktop host runs the page inside WebKitGTK, whose file
+      // chooser has no concept of a directory: the attributes above are
+      // ignored and an ordinary file chooser opens, which an operator cannot
+      // pick a folder in. Telling the host first lets it answer this one
+      // request with a real folder chooser. In a browser there is no handler
+      // to tell, and the attributes work on their own.
+      window.webkit?.messageHandlers?.amigaDesktop?.postMessage("expect-folder");
     }
     if (accept) input.accept = accept;
     input.onchange = () => resolve([...input.files]);
