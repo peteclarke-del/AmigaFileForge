@@ -16,6 +16,7 @@ from typing import BinaryIO, Callable
 
 from .ffs_install_service import FFSInstallMixin
 from .install_service import InstallMixin
+from .workbench_install import WorkbenchInstallMixin
 from .hardfile_geometry import (
     BLOCK_SIZE as HARDFILE_SECTOR_SIZE,
     MAX_SIZE as HARDFILE_MAX_SIZE,
@@ -90,6 +91,7 @@ from .dms import (
     parse_dms,
 )
 from . import amiga_paths
+from . import progress as progress_module
 
 
 COPY_BUFFER_SIZE = 8 * 1024 * 1024
@@ -99,6 +101,7 @@ class DiskService(
     FilesystemDiskMixin,
     FFSInstallMixin,
     InstallMixin,
+    WorkbenchInstallMixin,
     RdbPartitionMixin,
     RomDiskMixin,
     DMSDiskMixin,
@@ -1049,10 +1052,10 @@ class DiskService(
     def prepare_download(
         self,
         session: ImageSession,
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
     ) -> Path:
         """Finalise an image so the downloaded bytes are hardware-ready."""
-        report = progress or (lambda _message, _current=None, _total=None: None)
+        report = progress_module.reporter(progress)
         is_hardfile = bool(
             session.descriptor_path and session.path.suffix.lower() in {".hdf", ".hda"}
         )
@@ -3294,7 +3297,7 @@ class DiskService(
         target: ImageSession,
         target_parent: str,
         directory_name: str | None,
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
         *,
         create_directory: bool = True,
     ) -> str:
@@ -3314,11 +3317,11 @@ class DiskService(
         target: ImageSession,
         target_parent: str,
         directory_name: str | None,
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
         *,
         create_directory: bool = True,
     ) -> str:
-        report = progress or (lambda _message, _current=None, _total=None: None)
+        report = progress_module.reporter(progress)
         if target.kind not in {"ffs", "ofs"}:
             raise DiskError("Disk images can only be expanded into an FFS destination.")
         self.require_writable_geometry(target)
@@ -3489,7 +3492,7 @@ class DiskService(
         source_side: int | None,
         target: ImageSession,
         target_directory: str,
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
         *,
         rows: list[dict] | None = None,
     ) -> None:
@@ -3510,9 +3513,9 @@ class DiskService(
         rows: list[dict],
         target: ImageSession,
         target_directory: str,
-        progress: Callable[[str, int | None, int | None], None] | None = None,
+        progress: progress_module.Progress | None = None,
     ) -> None:
-        report = progress or (lambda _message, _current=None, _total=None: None)
+        report = progress_module.reporter(progress)
         if not rows:
             return
         source_path = self.resolve(source)

@@ -31,12 +31,16 @@ function hasHostCapability(capability) {
 }
 
 const {
+  alertNotice,
   api: rawApi,
   uploadApi: rawUploadApi,
+  confirmChoice,
   esc,
   humanSize,
   modal,
   modalContent,
+  overlayDialog,
+  promptValue,
   setModalAbort,
   setModalProgress,
   showModal,
@@ -173,7 +177,8 @@ function installEditorDocumentTabs(root, pane) {
     captureActiveEditorDocument();
     const key = button.dataset.editorDocumentClose;
     const document = editorDocuments.get(key);
-    if (document?.draft != null && document.draft !== document.savedValue && !confirm(`Close ${document.name} and discard its unsaved changes?`)) return;
+    if (document?.draft != null && document.draft !== document.savedValue
+      && !await confirmChoice("Discard unsaved changes?", `${document.name} has changes that have not been written back to the image.`, { confirmLabel: "Close and discard", danger: true })) return;
     editorDocuments.delete(key);
     persistEditorDocuments();
     if (key !== editorWorkspace.state.active) return installEditorDocumentTabs(root, pane);
@@ -217,19 +222,85 @@ function uploadApi(url, formData, options = {}) {
   return rawUploadApi(url, formData, options);
 }
 
+//  How long the pointer may sit outside an open menu before it closes. A menu
+//  panel and its summary are separate boxes with a gap between them, and a
+//  submenu opens a column the pointer crosses corners to reach, so closing the
+//  instant the pointer leaves would shut the menu during ordinary use. A short
+//  grace period is long enough to cross those gaps and short enough that the
+//  menu still feels as though it closes when you move away from it.
+const MENU_CLOSE_DELAY = 260;
+
+/** Close a details-based menu when the pointer moves off it, and tidy up.
+ *
+ * A menu that stays open until its own heading is clicked again leaves a panel
+ * covering the file list while the operator works somewhere else, and reads as
+ * though it is stuck. This gives every menu the behaviour a menu is expected
+ * to have: it closes when the pointer moves away, when something outside it is
+ * clicked, when Escape is pressed and when a command inside it is chosen.
+ *
+ * The pointer rule only arms once the pointer has actually been inside the
+ * menu, so a menu opened from the keyboard is not closed by a mouse resting
+ * somewhere else on the screen.
+ */
+function wireDismissibleMenu(menu) {
+  if (!menu || menu.dataset.dismissWired === "yes") return;
+  menu.dataset.dismissWired = "yes";
+  let closeTimer = null;
+  const cancelClose = () => { clearTimeout(closeTimer); closeTimer = null; };
+  const close = () => { cancelClose(); menu.open = false; };
+  menu.addEventListener("pointerenter", cancelClose);
+  menu.addEventListener("pointerleave", event => {
+    // A pointerleave raised while a native control such as a <select> has the
+    // pointer captured is not the operator moving away from the menu.
+    if (!menu.open || event.pointerType === "" ) return;
+    cancelClose();
+    closeTimer = setTimeout(close, MENU_CLOSE_DELAY);
+  });
+  menu.addEventListener("toggle", () => { if (!menu.open) cancelClose(); });
+  // Choosing a command is the end of the menu's job, whether or not the pane
+  // is re-rendered afterwards.
+  menu.addEventListener("click", event => {
+    if (event.target.closest("summary")) return;
+    if (event.target.closest("button, a")) close();
+  });
+}
+
+/** Close every open menu, except one being deliberately left alone. */
+function closeOpenMenus(except = null) {
+  document.querySelectorAll(".tool-menu[open], .top-help-menu[open]").forEach(menu => {
+    if (menu !== except && !menu.contains(except)) menu.open = false;
+  });
+}
+
+document.addEventListener("pointerdown", event => {
+  const inside = event.target.closest(".tool-menu, .top-help-menu");
+  closeOpenMenus(inside);
+});
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  const open = document.querySelector(".tool-menu[open]");
+  if (!open) return;
+  open.open = false;
+  open.querySelector(":scope > summary")?.focus();
+});
+
 function fitPaneMenus(host) {
   const menus = [...host.querySelectorAll(".tool-menu")];
-  menus.forEach(menu => menu.addEventListener("toggle", () => {
-    if (!menu.open) return;
-    menus.forEach(other => { if (other !== menu) other.open = false; });
-    requestAnimationFrame(() => {
-      const panel = menu.querySelector(":scope > .tool-menu-panel");
-      if (!panel) return;
-      const available = Math.max(140, window.innerHeight - panel.getBoundingClientRect().top - 10);
-      panel.style.setProperty("--menu-available-height", `${available}px`);
-      panel.classList.toggle("tool-menu-panel-right", panel.getBoundingClientRect().right > window.innerWidth - 8);
+  menus.forEach(menu => {
+    wireDismissibleMenu(menu);
+    menu.addEventListener("toggle", () => {
+      if (!menu.open) return;
+      // Only one menu at a time, across every pane, not just this one.
+      closeOpenMenus(menu);
+      requestAnimationFrame(() => {
+        const panel = menu.querySelector(":scope > .tool-menu-panel");
+        if (!panel) return;
+        const available = Math.max(140, window.innerHeight - panel.getBoundingClientRect().top - 10);
+        panel.style.setProperty("--menu-available-height", `${available}px`);
+        panel.classList.toggle("tool-menu-panel-right", panel.getBoundingClientRect().right > window.innerWidth - 8);
+      });
     });
-  }));
+  });
 }
 
 function updateAddPaneButton() {
@@ -597,6 +668,9 @@ function renderPane(index, preserveScroll = false) {
   const isRom = pane.image.kind === "rom";
   const isKickfs = pane.image.kind === "kickfs";
   const isFfsHdd = pane.image.kind === "ffs" && pane.image.hardDisk;
+  // Installing anything -- Workbench, a staged title, WHDLoad -- needs a
+  // writable AmigaDOS volume to install into.
+  const acceptsInstall = paneAcceptsInstall(pane);
   const isArchive = Boolean(pane.archivePath);
   const isOfs = isOfsPane(pane);
   // Every AmigaDOS volume nests drawers, OFS included, so the only views
@@ -804,7 +878,10 @@ function renderPane(index, preserveScroll = false) {
       <button class="menu-command build-deployment"><b>⇩</b><span>Build hardware deployment…</span></button>
       ${isPartitionIndex ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
       ${isFfsHdd ? '<button class="menu-command audit-ffs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
-      <button class="menu-command staged-installations"><b>▤</b><span>Staged installations…</span></button>
+      ${acceptsInstall ? `<span class="menu-separator" role="separator"></span>
+        <button class="menu-command install-workbench"><b>⌘</b><span>Install Workbench…</span></button>
+        <button class="menu-command staged-installations"><b>▤</b><span>Staged installations…</span></button>`
+        : '<button class="menu-command staged-installations"><b>▤</b><span>Staged installations…</span></button>'}
       ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isKickfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-kickfs"><b>▥</b><span>Kickstart ROM properties…</span></button>'}` : isPartitionIndex || isDMS ? (isDMS ? '<button class="menu-command dms-project"><b>≋</b><span>DMS archive project…</span></button><button class="menu-command convert-dms"><b>⇥</b><span>Convert archive to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
     </div>
   </details>`;
@@ -891,6 +968,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".validate-image")?.addEventListener("click", () => guardedPaneAction(index, () => validateImage(index)));
   host.querySelector(".audit-ffs-installations")?.addEventListener("click", () => guardedPaneAction(index, () => showFfsInstallationAudit(index)));
   host.querySelector(".staged-installations")?.addEventListener("click", () => guardedPaneAction(index, () => showStagedInstallations(index)));
+  host.querySelector(".install-workbench")?.addEventListener("click", () => guardedPaneAction(index, () => showWorkbenchInstall(index)));
   host.querySelector(".open-hex-editor")?.addEventListener("click", () => guardedPaneAction(index, () => openHexEditor(index)));
   host.querySelector(".run-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, false)));
   host.querySelector(".debug-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, true)));
@@ -1138,7 +1216,7 @@ function wireRow(row, index) {
       if (files.length) return addRomHostFiles(index, files, Number(row.dataset.bank));
     };
   } else if (
-    panes[index].image.kind === "ffs"
+    paneHoldsVolume(panes[index])
     && row.dataset.type === "dir"
   ) {
     row.ondragover = event => {
@@ -1229,7 +1307,7 @@ function wireDropZone(host, index) {
     }
     const openDisk = event.dataTransfer.getData("application/x-amiga-disk");
     const diskSource = openDisk ? JSON.parse(openDisk) : null;
-    if (diskSource && panes[index].image?.kind === "ffs") {
+    if (diskSource && paneHoldsVolume(panes[index])) {
       if (diskSource.image === panes[index].image.id) {
         return toast("Choose a different FFS image as the destination.", true);
       }
@@ -1247,7 +1325,7 @@ function wireDropZone(host, index) {
     }
     const images = files.filter(file => formats.isImportableImage(file.name) || formats.isDescriptor(file.name));
     if (!panes[index].image) return openFiles(index, files);
-    if (images.length && panes[index].image.kind === "ffs") {
+    if (images.length && paneHoldsVolume(panes[index])) {
       for (const file of files.filter(item => !formats.isDescriptor(item.name))) {
         await importHostFile(index, file);
       }
@@ -1509,7 +1587,7 @@ async function showCheckpointManager(index) {
     button.onclick = async () => {
       const row = button.closest("[data-checkpoint]");
       const checkpoint = data.checkpoints.find(item => item.id === row.dataset.checkpoint);
-      if (!checkpoint || !confirm(`Restore “${checkpoint.name}”? The current state will be kept as an automatic undo point.`)) return;
+      if (!checkpoint || !await confirmChoice("Restore this checkpoint?", `The image will be returned to “${checkpoint.name}”.`, { confirmLabel: "Restore", note: "The current state is kept as an automatic undo point first, so this can itself be undone." })) return;
       modal.close();
       try {
         const result = await paneOperation(index, `Restoring ${checkpoint.name}…`, () => api(
@@ -1527,7 +1605,7 @@ async function showCheckpointManager(index) {
     button.onclick = async () => {
       const row = button.closest("[data-checkpoint]");
       const checkpoint = data.checkpoints.find(item => item.id === row.dataset.checkpoint);
-      if (!checkpoint || !confirm(`Delete checkpoint “${checkpoint.name}”?`)) return;
+      if (!checkpoint || !await confirmChoice("Delete this checkpoint?", `“${checkpoint.name}” will no longer be available to restore.`, { confirmLabel: "Delete checkpoint", danger: true })) return;
       button.disabled = true;
       try {
         const result = await api(
@@ -2483,32 +2561,50 @@ async function editFileMetadata(index, entry) {
   });
 }
 
-function chooseHostFile(index) {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.multiple = true;
-  input.onchange = () => addSelectedHostFiles(index, [...input.files]);
-  input.click();
+//: Ask the browser for host files without putting a control on screen.
+//:
+//: There is no way to open a file chooser except through an <input type=file>,
+//: so every place that wants one builds the same throwaway element. Building
+//: it in one place means the cancel case is handled once as well: without an
+//: `oncancel` handler the promise never settles, and the caller waits for a
+//: choice the operator has already declined to make.
+function pickHostFiles({ directory = false, accept = "" } = {}) {
+  return new Promise(resolve => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    if (directory) {
+      input.setAttribute("webkitdirectory", "");
+      input.setAttribute("directory", "");
+    }
+    if (accept) input.accept = accept;
+    input.onchange = () => resolve([...input.files]);
+    input.oncancel = () => resolve([]);
+    input.click();
+  });
 }
 
-function chooseHostFolder(index) {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.multiple = true;
-  input.setAttribute("webkitdirectory", "");
-  input.setAttribute("directory", "");
-  if (panes[index].image?.kind === "hdf" && panes[index].partition === null) {
-    input.accept = ".adf,.adz,.hfe,.scp,.zip";
-  }
-  input.onchange = () => {
-    const files = [...input.files];
-    if (!files.length) return;
-    addSelectedHostFolder(index, files.map(file => ({
-      file,
-      relativePath: file.webkitRelativePath || file.name,
-    })));
-  };
-  input.click();
+//: Host files carry their position in the chosen folder, which is what an
+//: import needs to rebuild the tree on the Amiga side.
+const hostFolderRecords = files => files.map(file => ({
+  file,
+  relativePath: file.webkitRelativePath || file.name,
+}));
+
+async function chooseHostFile(index) {
+  const files = await pickHostFiles();
+  if (files.length) addSelectedHostFiles(index, files);
+}
+
+async function chooseHostFolder(index) {
+  // A drive showing its partition table has nowhere to put an ordinary file,
+  // so only whole disk images are worth offering there.
+  const atPartitionTable = panes[index].image?.kind === "hdf" && panes[index].partition === null;
+  const files = await pickHostFiles({
+    directory: true,
+    accept: atPartitionTable ? formats.accept : "",
+  });
+  if (files.length) addSelectedHostFolder(index, hostFolderRecords(files));
 }
 
 function readDroppedDirectory(entry) {
@@ -2547,10 +2643,7 @@ async function collectDroppedHostFiles(dataTransfer) {
     for (const entry of entries) await collectDroppedEntry(entry, "", output);
     return output;
   }
-  return [...dataTransfer.files].map(file => ({
-    file,
-    relativePath: file.webkitRelativePath || file.name,
-  }));
+  return hostFolderRecords([...dataTransfer.files]);
 }
 
 async function prepareHostFolderMetadata(records) {
@@ -2621,7 +2714,7 @@ async function addSelectedHostFolder(index, records) {
     "file-menu-folder-import",
     "file",
   )) return false;
-  const canPreserve = pane.image.kind === "ffs";
+  const canPreserve = paneHoldsVolume(pane);
   const initialMode = canPreserve ? "preserve" : "flatten";
   const roots = new Set(relevant.map(item => item.relativePath.replace(/\\/g, "/").split("/")[0]));
   const initial = folderTargetPlans(pane, relevant, initialMode);
@@ -2681,7 +2774,7 @@ async function addSelectedHostFiles(index, files) {
   // or retain the source image as an ordinary file.  Running the generic file
   // preflight first treats the container name as an FFS leaf name and hides
   // that decision behind an irrelevant filename warning.
-  const ordinaryFiles = pane.image?.kind === "ffs"
+  const ordinaryFiles = paneHoldsVolume(pane)
     ? preparedFiles.filter(item => !formats.isImportableImage(item.file.name))
     : preparedFiles;
   if (ordinaryFiles.length
@@ -2931,12 +3024,12 @@ async function showRomWorkbench(index, initial = {}) {
   let patchDocument = null;
   root.querySelector(".rom-patch-file").onchange = async event => { try { patchDocument = JSON.parse(await event.target.files[0].text()); root.querySelector(".apply-rom-patch").disabled = false; } catch (error) { patchDocument = null; toast(`Could not read patch: ${error.message}`, true); } };
   root.querySelector(".apply-rom-patch").onclick = async () => {
-    if (!patchDocument || !window.confirm("This changes raw ROM bytes and may make hardware unbootable. Apply the checksum-verified patch?")) return;
+    if (!patchDocument || !await confirmChoice("Apply this ROM patch?", "This changes raw ROM bytes and may make hardware unbootable.", { confirmLabel: "Apply verified patch", danger: true, note: "The patch has been checksum-verified against this exact image." })) return;
     const data = await api(`/api/images/${imageId}/rom/patch`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({patch:patchDocument})}); pane.image=data.image; modal.close(); await loadDirectory(index); toast("ROM patch applied and verified");
   };
-  root.querySelectorAll(".repair-rom-checksum").forEach(button => button.addEventListener("click", async () => { const action=button.dataset.repair; if (!window.confirm("Repair this proven ROM metadata fault? An undo checkpoint will be created.")) return; const data=await api(`/api/images/${imageId}/rom/repair`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})}); pane.image=data.image; modal.close(); await loadDirectory(index); toast("ROM metadata repaired and re-audited"); }));
+  root.querySelectorAll(".repair-rom-checksum").forEach(button => button.addEventListener("click", async () => { const action=button.dataset.repair; if (!await confirmChoice("Repair this ROM metadata fault?", "The fault has been proven against this image.", { confirmLabel: "Repair", note: "An undo checkpoint is created first." })) return; const data=await api(`/api/images/${imageId}/rom/repair`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})}); pane.image=data.image; modal.close(); await loadDirectory(index); toast("ROM metadata repaired and re-audited"); }));
   root.querySelector(".build-rom").onclick = async () => {
-    if (!window.confirm("This is dangerous: replace every byte in the working ROM with the generated image?")) return;
+    if (!await confirmChoice("Replace every byte in this ROM?", "The complete working ROM is overwritten with the generated image.", { confirmLabel: "Replace the ROM", danger: true, note: "An undo checkpoint is created first." })) return;
     const commands = root.querySelector('[name="builderCommands"]').value.split(/\n/).map(line => line.trim()).filter(Boolean).map(line => { const [name,...syntax]=line.split(/\s+/); return {name,syntax:syntax.join(" ")}; });
     const files = [];
     for (const file of root.querySelector('[name="builderFiles"]').files) files.push({name:file.name,hex:[...new Uint8Array(await file.arrayBuffer())].map(value=>value.toString(16).padStart(2,"0")).join("")});
@@ -2983,7 +3076,7 @@ async function prepareHostFileMetadata(files) {
 async function importHostFile(index, file, forceRaw = false, batch = null) {
   const pane = panes[index];
   if (!pane.image || (pane.image.kind === "hdf" && pane.partition === null)) return toast("Open a disk first.", true);
-  if (!forceRaw && pane.image.kind === "ffs" && formats.isImportableImage(file.name)) {
+  if (!forceRaw && paneHoldsVolume(pane) && formats.isImportableImage(file.name)) {
     return promptImageExtraction(index, file, batch);
   }
   const detected = batch?.currentMetadata || {};
@@ -3002,11 +3095,18 @@ async function importHostFile(index, file, forceRaw = false, batch = null) {
   const canApplyAll = batch?.total > batch?.current;
   const closed = showModal(`
     <h2>Insert ${esc(file.name)}</h2>${batchLabel}<p>${nameRule.valid ? "Choose the target filename and optional Amiga metadata." : `${esc(file.name)} is not a legal ${nameRule.label} filename, so a safe replacement has been suggested.`}</p>
-    <div class="field"><label>Target filename · max ${nameRule.limit} characters</label>
-      <input name="targetName" maxlength="${nameRule.limit}" value="${esc(nameRule.suggested)}" required></div>
-    <div class="field"><label>Protection</label><input name="protection" value="${esc(detected.protection || "")}" placeholder="----rwed" maxlength="8"><small>The eight letters <code>List</code> prints. Leave empty for the ordinary <code>----rwed</code>.</small></div>
-    <div class="field"><label>File comment</label><input name="comment" value="${esc(detected.comment || "")}" maxlength="79" placeholder="Optional, up to 79 characters"></div>
-    <div class="field"><label>Workbench icon type</label><input name="filetype" placeholder="Tool, Project or 3"><small>Only when the file should carry a <code>.info</code> icon.</small></div>
+    <div class="field"><label>Target filename</label>
+      <input name="targetName" maxlength="${nameRule.limit}" value="${esc(nameRule.suggested)}" required>
+      <small>Up to ${nameRule.limit} characters, in ${esc(nameRule.label)} spelling.</small></div>
+    <div class="field"><label>Protection</label>
+      <input name="protection" value="${esc(detected.protection || "")}" placeholder="----rwed" maxlength="8">
+      <small>The eight letters <code>List</code> prints. Leave it empty for the ordinary <code>----rwed</code>.</small></div>
+    <div class="field"><label>File comment</label>
+      <input name="comment" value="${esc(detected.comment || "")}" maxlength="79" placeholder="Optional">
+      <small>Up to 79 characters, kept with the file on the volume.</small></div>
+    <div class="field"><label>Workbench icon type</label>
+      <input name="filetype" placeholder="Tool, Project or 3">
+      <small>Only when the file should carry a <code>.info</code> icon.</small></div>
     <input type="hidden" name="applyRemaining" value="no">
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button>${canApplyAll ? '<button class="button ghost apply-import-all" value="add">Insert and apply to all remaining</button>' : ""}<button class="button primary" value="add">Insert File</button></div>`,
   async formValues => {
@@ -3275,7 +3375,7 @@ const INSTALL_MODES = [
   {
     value: "stage",
     label: "Stage it for installing later",
-    detail: "Extracts the disc into a staging drawer. Add the rest of a multi-disc set to the same place, then install them together here or on a real Amiga.",
+    detail: "Extracts the disc into a staging drawer on this drive. Add the rest of a multi-disc set to the same place, then install them together here, or boot the drive and run the title's own installer against the drawer.",
   },
   {
     value: "whdload",
@@ -3294,7 +3394,7 @@ function installPlanMarkup(options) {
     <div data-install-options hidden>
       <div class="field"><label>Title</label>
         <input name="installTitle" maxlength="60" value="${esc(options.suggestedName || "")}">
-        <small class="muted">Discs staged under the same title are merged into one tree.</small></div>
+        <small>Discs staged under the same title are merged into one tree on this drive.</small></div>
       <div class="field"><label>Disc</label>
         <input name="discLabel" maxlength="30" placeholder="Disc 1"></div>
       <div class="field"><label>Method</label>
@@ -3331,8 +3431,9 @@ function bindInstallPlan(index, options) {
   const refresh = () => {
     const mode = chosen();
     whdloadPanel.hidden = mode !== "whdload";
-    // Staging always writes to the staging area and never to the drive, so
-    // the choice of writing now only makes sense for the other two.
+    // Staging writes into the drive's staging drawer rather than into the
+    // title's final home, so "write it in now" is the step that moves it
+    // there. The emulator mode does not install anything itself.
     installNow.hidden = mode === "installer";
   };
   modes.forEach(input => input.addEventListener("change", refresh));
@@ -3359,64 +3460,377 @@ function bindInstallPlan(index, options) {
     });
 }
 
+//: Where staged discs live on the drive, unless the operator names another.
+//: Staging writes onto the target image so the install can be finished in an
+//: emulator or on the real machine, which means this is an Amiga path, not a
+//: directory on the computer running the application. It has to match
+//: DEFAULT_STAGING_PARENT in app/install_service.py, which explains why it is
+//: under Storage rather than at the volume root.
+const DEFAULT_STAGING_PARENT = "Storage/Install";
+
 async function showStagedInstallations(index) {
   const pane = panes[index];
-  const data = await paneOperation(index, "Reading staged titles…", () => api("/api/install/staged"));
-  const titles = data.titles || [];
   const installable = paneAcceptsInstall(pane);
+  if (!installable) {
+    return alertNotice(
+      "Staged installations",
+      "Staged discs live in a drawer on the drive they are destined for, so this needs a volume open.",
+      { confirmLabel: "Close" },
+    );
+  }
+  const partition = pane.partition == null ? "" : `&partition=${pane.partition}`;
+  const data = await paneOperation(index, "Reading staged titles…", () =>
+    api(`/api/images/${pane.image.id}/install/staged?parent=${encodeURIComponent(DEFAULT_STAGING_PARENT)}${partition}`));
+  const titles = data.titles || [];
   const rows = titles.map(title => `
-    <div class="staged-title" data-slug="${esc(title.slug)}">
+    <div class="staged-title" data-name="${esc(title.name)}">
       <div>
         <b>${esc(title.title)}</b>
-        <small>${title.discCount} disc${title.discCount === 1 ? "" : "s"} · ${title.fileCount} file${title.fileCount === 1 ? "" : "s"} · ${humanSize(title.bytes)}</small>
-        <small>${esc(title.discs.map(disc => `${disc.label}: ${disc.volume}`).join(" · "))}</small>
-        ${title.conflicts.length ? `<small class="staged-conflict">${title.conflicts.length} file${title.conflicts.length === 1 ? "" : "s"} differed between discs; the first was kept and the rest are under alternates/</small>` : ""}
+        <small>${title.discCount ? `${title.discCount} disc${title.discCount === 1 ? "" : "s"} · ` : ""}${title.fileCount} file${title.fileCount === 1 ? "" : "s"} · ${humanSize(title.bytes)}</small>
+        <small><code>${esc(title.path)}</code></small>
+        ${title.discs.length ? `<small>${esc(title.discs.map(disc => `${disc.label}: ${disc.volume}`).join(" · "))}</small>` : ""}
+        ${title.conflicts.length ? `<small class="staged-conflict">${title.conflicts.length} file${title.conflicts.length === 1 ? "" : "s"} differed between discs; the first was kept and the rest are under ${esc(DEFAULT_STAGING_PARENT)}/Forge-Staging</small>` : ""}
       </div>
       <div class="staged-actions">
-        ${installable ? '<button type="button" class="button primary staged-install">Install here</button>' : ""}
+        <button type="button" class="button primary staged-install">Install here</button>
         <button type="button" class="button ghost staged-discard">Discard</button>
       </div>
     </div>`).join("");
 
   showModal(`
     <h2>Staged installations</h2>
-    <p>Discs waiting to be installed. Stage every disc of a set under one title, then install it here or copy the staging drawer to a real Amiga and finish it there.</p>
-    <div class="selected-destination"><small>STAGING DIRECTORY</small><code>${esc(data.root || "")}</code></div>
-    ${installable
-      ? `<div class="help-note">Installing writes into <code>${esc(pane.partitionName ? `${pane.partitionName}:` : pane.image.name)}</code>, under the drawer named below.</div>
-         <div class="field"><label>Install into</label><input name="stagedParent" maxlength="60" value="Games"></div>`
-      : '<div class="help-note">Open a partition on a hard drive to install any of these. A floppy has nowhere to install to, and a partition table is not a volume.</div>'}
-    <div class="staged-title-list">${rows || '<p class="muted">Nothing is staged. Choose <strong>Install it onto this drive</strong> when you add a disc to a hard drive.</p>'}</div>
-    <div class="modal-actions"><button class="button ghost" value="cancel">Close</button></div>`,
+    <p>Discs waiting on this drive. Stage every disc of a set under one title, then install it here, or boot the drive in an emulator or a real Amiga and run the title's own installer against the staging drawer.</p>
+    <div class="selected-destination"><small>STAGING DRAWER</small><code>${esc(volumeLabel(pane))}${esc(data.root || DEFAULT_STAGING_PARENT)}</code></div>
+    <div class="field"><label>Install into</label><input name="stagedParent" maxlength="60" value="Games" placeholder="Leave empty for the volume root">
+      <small>The drawer on this volume that finished titles are moved into.</small></div>
+    <div class="staged-title-list">${rows || `<p class="muted">Nothing is staged on this drive. Choose <strong>Install it onto this drive</strong> when you add a disc, and pick <strong>Stage it for installing later</strong>.</p>`}</div>
+    <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div>`,
   () => true);
 
   modalContent.querySelectorAll(".staged-title").forEach(row => {
-    const slug = row.dataset.slug;
+    const name = row.dataset.name;
     row.querySelector(".staged-install")?.addEventListener("click", async () => {
       const parent = modalContent.querySelector('input[name="stagedParent"]')?.value.trim() || "";
       modal.close();
-      const result = await trackedPaneOperation(index, "Installing a staged title…", operationId =>
-        api(`/api/images/${pane.image.id}/install/staged`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slug, parent, partition: pane.partition, operationId }),
-        }));
-      pane.image = result.image;
-      await loadDirectory(index);
-      toast(`${result.title} installed into ${result.path}`);
+      try {
+        const result = await trackedPaneOperation(index, "Installing a staged title…", operationId =>
+          api(`/api/images/${pane.image.id}/install/staged`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name, parent, stagingParent: DEFAULT_STAGING_PARENT,
+              partition: pane.partition, operationId,
+            }),
+          }));
+        pane.image = result.image;
+        await loadDirectory(index);
+        toast(`${result.title} installed into ${result.path}`);
+      } catch (error) {
+        toast(error.message, true);
+      }
     });
     row.querySelector(".staged-discard")?.addEventListener("click", async () => {
-      // Discarding throws away extracted discs, so it is confirmed rather
-      // than acted on from a single click. The original images are untouched,
-      // which is worth saying: it is the difference between an inconvenience
-      // and a loss.
-      if (!confirm(`Discard the staged discs for “${row.querySelector("b").textContent}”? The original images are untouched.`)) return;
-      await api(`/api/install/staged/${encodeURIComponent(slug)}`, { method: "DELETE" });
+      // Discarding deletes the extracted discs off the drive, so it is
+      // confirmed rather than acted on from a single click. The original
+      // images are untouched, which is worth saying: it is the difference
+      // between an inconvenience and a loss.
+      const title = row.querySelector("b").textContent;
+      if (!await confirmChoice(
+        "Discard these staged discs?",
+        `The staging drawer for “${title}” is deleted from ${volumeLabel(pane)}${DEFAULT_STAGING_PARENT}.`,
+        { confirmLabel: "Discard", danger: true, note: "The original disc images are untouched, so the set can be staged again." },
+      )) return;
       modal.close();
-      toast("Staged title discarded");
+      try {
+        await api(`/api/images/${pane.image.id}/install/staged/discard`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, stagingParent: DEFAULT_STAGING_PARENT, partition: pane.partition }),
+        });
+        await loadDirectory(index);
+        toast("Staged title discarded");
+      } catch (error) {
+        toast(error.message, true);
+      }
       showStagedInstallations(index);
     });
   });
+}
+
+//: How a volume is named in a sentence, and what a path on it is written
+//: after: the AmigaDOS volume with its colon when the pane knows one, because
+//: that is what an operator sees on the machine, and the image file name with
+//: a separating space when it does not.
+function volumeLabel(pane) {
+  if (pane?.partitionName) return `${pane.partitionName}:`;
+  return pane?.image?.name ? `${pane.image.name} ` : "";
+}
+
+
+//: Installing AmigaOS from the operator's own floppies. A blank drive is not
+//: a machine you can use, and this is the one install that can be done in full
+//: here, because AmigaOS is installed by copying disks into known places
+//: rather than by running Amiga code.
+//:
+//: The discs are opened as ordinary images first, exactly as they would be if
+//: the operator opened one in a pane, and then identified by the volume name
+//: inside each. That is why a folder can be pointed at rather than a list of
+//: files assembled by hand: naming is inconsistent across ADF collections and
+//: the volume name is the only part that was written by Commodore.
+async function showWorkbenchInstall(index) {
+  const pane = panes[index];
+  if (!paneAcceptsInstall(pane)) {
+    return alertNotice(
+      "Install Workbench",
+      "Workbench is installed into a volume, so open a partition on a hard drive first.",
+      { confirmLabel: "Close" },
+    );
+  }
+  const roles = await api("/api/install/workbench/disks").then(data => data.roles).catch(() => []);
+  const target = volumeLabel(pane) || pane.image.name;
+
+  //  Warnings are shown after the dialog has closed rather than from inside
+  //  its submit handler. A dialog that is waiting on its own operation keeps
+  //  its form hidden behind the progress panel, so a question asked from in
+  //  there would sit underneath it with the install apparently still running.
+  let warnings = [];
+  const closed = showModal(`
+    <h2>Install Workbench</h2>
+    <p>Prepares ${esc(target)} by copying your own Workbench floppies onto it. Point at the folder holding them, or pick the disc images yourself.</p>
+    <div class="help-note"><strong>Your own disks:</strong> Amiga File Forge does not ship AmigaOS and cannot fetch it. Use the ADF, ADZ, DMS or HFE images of the Workbench disks you own.</div>
+    <div class="field"><label>Workbench disc images</label>
+      <div class="workbench-disc-choosers">
+        <button type="button" class="button" data-choose-folder>Choose a folder…</button>
+        <button type="button" class="button" data-choose-files>Choose disc images…</button>
+      </div>
+      <small>Everything in the folder is read; the disks that are not part of a release are ignored.</small></div>
+    <div class="file-selection-summary" data-disc-summary>
+      <span class="file-selection-empty">No disc images chosen yet.</span>
+    </div>
+    <div data-workbench-survey hidden></div>
+    <label class="check-field"><input type="checkbox" name="createDrawers" value="yes" checked> Create the working drawers the install script makes (T, Trashcan, Devs/DOSDrivers, Prefs/Env-Archive)</label>
+    <div class="help-note">Files already on the volume are left alone, so an existing drive is added to rather than replaced, and installing twice does not undo work done in between.</div>
+    <div class="modal-actions">
+      <button class="button ghost" value="cancel">Cancel</button>
+      <button class="button primary" value="install" data-install-workbench disabled>Install Workbench</button>
+    </div>`,
+  async form => {
+    const chosen = collectWorkbenchChoice();
+    if (!chosen || !Object.keys(chosen.discs).length) {
+      throw new Error("Choose the Workbench disc images first.");
+    }
+    const result = await trackedPaneOperation(index, "Installing Workbench…", operationId =>
+      api(`/api/images/${pane.image.id}/install/workbench`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discs: chosen.discs,
+          version: chosen.version,
+          partition: pane.partition,
+          createDrawers: form.get("createDrawers") === "yes",
+          operationId,
+        }),
+      }));
+    pane.image = result.image;
+    await releaseWorkbenchDiscs();
+    await loadDirectory(index);
+    const workbench = result.workbench;
+    toast(`Workbench ${workbench.version || ""} installed: ${workbench.copied} file${workbench.copied === 1 ? "" : "s"} copied.`.replace(/\s+/g, " "));
+    warnings = workbench.warnings || [];
+    return true;
+  });
+
+  bindWorkbenchInstall(index, roles);
+  closed.then(() => {
+    if (warnings.length) {
+      alertNotice("Workbench installed, with warnings", warnings.join("\n\n"), { confirmLabel: "Close" });
+    }
+  });
+  return closed;
+}
+
+//: The opened disc sessions, kept while the dialog is up so they can be
+//: identified, chosen between and then installed from without uploading the
+//: same floppies twice. They are released when the dialog closes, because a
+//: Workbench set is seven images and leaving them open would hold on to the
+//: better part of ten megabytes for nothing.
+let workbenchDiscSessions = [];
+let workbenchSurvey = null;
+//: Set while the install dialog is up, so the survey can re-enable its own
+//: install button after the operator changes which disc plays which part.
+let workbenchRefresh = () => {};
+
+async function releaseWorkbenchDiscs() {
+  const sessions = workbenchDiscSessions;
+  workbenchDiscSessions = [];
+  workbenchSurvey = null;
+  await Promise.all(sessions.map(session =>
+    api(`/api/images/${session.id}`, { method: "DELETE" }).catch(() => {})));
+}
+
+function collectWorkbenchChoice() {
+  if (!workbenchSurvey) return null;
+  const discs = {};
+  modalContent.querySelectorAll("[data-role-choice]").forEach(select => {
+    if (select.value) discs[select.dataset.roleChoice] = select.value;
+  });
+  return { discs, version: workbenchSurvey.version || "" };
+}
+
+function bindWorkbenchInstall(index, roles) {
+  const summary = modalContent.querySelector("[data-disc-summary]");
+  const installButton = modalContent.querySelector("[data-install-workbench]");
+
+  modal.addEventListener("close", () => { releaseWorkbenchDiscs(); }, { once: true });
+
+  const chooser = async directory => {
+    const files = await pickHostFiles({ directory, accept: directory ? "" : formats.accept });
+    if (files.length) openWorkbenchDiscs(index, files, roles);
+  };
+  modalContent.querySelector("[data-choose-folder]").onclick = () => chooser(true);
+  modalContent.querySelector("[data-choose-files]").onclick = () => chooser(false);
+
+  //  Dropping a folder onto the dialog is the same gesture as dropping one
+  //  onto a pane, so it does the same thing here.
+  summary.addEventListener("dragover", event => {
+    event.preventDefault();
+    summary.classList.add("drop-target");
+  });
+  summary.addEventListener("dragleave", () => summary.classList.remove("drop-target"));
+  summary.addEventListener("drop", async event => {
+    event.preventDefault();
+    summary.classList.remove("drop-target");
+    const records = await collectDroppedHostFiles(event.dataTransfer);
+    openWorkbenchDiscs(index, records.map(item => item.file), roles);
+  });
+
+  //  The install button is only live once a Workbench disk has been chosen,
+  //  because that is the one disk without which the result cannot boot.
+  workbenchRefresh = () => {
+    const chosen = collectWorkbenchChoice();
+    installButton.disabled = !chosen || !chosen.discs.workbench;
+  };
+  workbenchRefresh();
+}
+
+//: Ask the server which of the opened discs is which. The identification is
+//: done there because it means reading each volume's name out of the image,
+//: and the release can be pinned so that changing it re-matches the whole set
+//: rather than only the disc the operator was looking at.
+function surveyWorkbenchDiscs(index, version = "") {
+  const pane = panes[index];
+  return api(`/api/images/${pane.image.id}/install/workbench/survey`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      discs: workbenchDiscSessions.map(session => session.id),
+      partition: pane.partition,
+      version,
+    }),
+  }).then(data => data.survey);
+}
+
+//: Disc images are opened one at a time so a slow or damaged one names itself
+//: rather than failing the whole selection anonymously.
+async function openWorkbenchDiscs(index, files, roles) {
+  const pane = panes[index];
+  const candidates = files.filter(file => file.size && !ignoredFolderFile(file.name)
+    && formats.isImportableImage(file.name));
+  const summary = modalContent.querySelector("[data-disc-summary]");
+  if (!candidates.length) {
+    summary.className = "file-selection-summary chooser-failed";
+    summary.innerHTML = "<span>No disc images were found in that selection. Workbench disks are ADF, ADZ, DMS or HFE files.</span>";
+    return;
+  }
+  await releaseWorkbenchDiscs();
+  const failures = [];
+  for (const [offset, file] of candidates.entries()) {
+    summary.className = "file-selection-summary has-files";
+    summary.innerHTML = `<span>Reading ${esc(file.name)} · ${offset + 1} of ${candidates.length}…</span>`;
+    const upload = new FormData();
+    upload.append("image", file);
+    upload.append("targetHardware", "auto");
+    try {
+      const opened = await uploadApi("/api/images", upload);
+      workbenchDiscSessions.push(opened.image);
+    } catch (error) {
+      failures.push(`${file.name}: ${error.message}`);
+    }
+  }
+  if (!workbenchDiscSessions.length) {
+    summary.className = "file-selection-summary chooser-failed";
+    summary.innerHTML = `<span>None of the selected files could be opened as a disc.</span>`;
+    return;
+  }
+  try {
+    workbenchSurvey = await surveyWorkbenchDiscs(index);
+  } catch (error) {
+    summary.className = "file-selection-summary chooser-failed";
+    summary.innerHTML = `<span>${esc(error.message)}</span>`;
+    return;
+  }
+  renderWorkbenchSurvey(index, workbenchSurvey, roles, failures);
+}
+
+function renderWorkbenchSurvey(index, survey, roles, failures = []) {
+  const summary = modalContent.querySelector("[data-disc-summary]");
+  const host = modalContent.querySelector("[data-workbench-survey]");
+  const recognised = survey.discs.filter(disc => disc.role);
+  summary.className = "file-selection-summary has-files";
+  summary.innerHTML = `
+    <span><strong>${recognised.length}</strong> install disk${recognised.length === 1 ? "" : "s"} recognised out of ${survey.discs.length} image${survey.discs.length === 1 ? "" : "s"} read.</span>
+    ${survey.unrecognised.length ? `<span>Not part of a release, so ignored: ${esc(survey.unrecognised.slice(0, 6).join(", "))}${survey.unrecognised.length > 6 ? "…" : ""}</span>` : ""}
+    ${failures.length ? `<span>Could not be opened: ${esc(failures.slice(0, 3).join("; "))}</span>` : ""}`;
+
+  const options = role => {
+    const matches = survey.discs.filter(disc => disc.role === role.key);
+    const selected = survey.chosen[role.key] || "";
+    return `<option value="">${role.required ? "Required: choose a disc" : "Not installed"}</option>`
+      + matches.map(disc => `<option value="${esc(disc.imageId)}"${disc.imageId === selected ? " selected" : ""}>${esc(disc.volume || disc.source)}${disc.version ? ` · ${esc(disc.version)}` : ""} · ${disc.fileCount} file${disc.fileCount === 1 ? "" : "s"}</option>`).join("");
+  };
+
+  host.hidden = false;
+  host.innerHTML = `
+    ${survey.versions.length > 1 ? `<div class="field"><label>AmigaOS release</label>
+      <select name="workbenchVersion" data-workbench-version>
+        ${survey.versions.map(value => `<option value="${esc(value)}"${value === survey.version ? " selected" : ""}>AmigaOS ${esc(value)}</option>`).join("")}
+      </select>
+      <small>Every disk is matched to this release. Mixing releases produces a system whose parts disagree with each other.</small></div>` : ""}
+    ${survey.missing.length ? `<div class="help-warning"><strong>Missing:</strong> the ${esc(survey.missing.map(role => role.label).join(", "))} disk${survey.missing.length === 1 ? " is" : "s are"} required and ${survey.missing.length === 1 ? "was" : "were"} not found in the selection.</div>` : ""}
+    <div class="workbench-disc-roles">
+      ${roles.map(role => `
+        <div class="workbench-disc-role">
+          <div><b>${esc(role.label)}${role.required ? " · required" : ""}</b><small>Lands in ${role.destination === ":" ? "the volume root" : `<code>${esc(role.destination)}</code>`} · ${esc(role.note)}</small></div>
+          <select data-role-choice="${esc(role.key)}">${options(role)}</select>
+        </div>`).join("")}
+    </div>`;
+
+  host.querySelectorAll("[data-role-choice]").forEach(select => {
+    select.onchange = () => workbenchRefresh();
+  });
+  host.querySelector("[data-workbench-version]")?.addEventListener("change", async event => {
+    try {
+      workbenchSurvey = await surveyWorkbenchDiscs(index, event.target.value);
+      renderWorkbenchSurvey(index, workbenchSurvey, roles, failures);
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+  workbenchRefresh();
+}
+
+//: Whether this pane is showing an AmigaDOS volume that a disc's contents can
+//: be extracted into, rather than a container that merely holds one.
+//:
+//: A hard drive answers for the partition currently open, not for the drive as
+//: a whole. Asking about the image's own kind said "hdf" whichever volume was
+//: open, so inserting a disc image into a partitioned drive -- the case the
+//: install modes exist for -- never offered to extract or install it, and
+//: quietly stored the ADF as an ordinary file instead.
+function paneHoldsVolume(pane) {
+  if (!pane?.image || pane.archivePath || pane.image.readOnly) return false;
+  if (pane.image.kind === "hdf") return pane.partition !== null;
+  return pane.image.kind === "ffs";
 }
 
 //: A pane can receive an install only when it is a volume on a hard drive.
@@ -3435,17 +3849,22 @@ async function performInstall(index, sourceImageId, sourceName, plan) {
   // means an install that fails later has still preserved the disc's contents
   // somewhere the operator can finish by hand.
   const staged = await trackedPaneOperation(index, `Staging ${sourceName}…`, operationId =>
-    api("/api/install/stage", {
+    api(`/api/images/${pane.image.id}/install/stage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sourceImage: sourceImageId,
         sourcePartition: null,
+        partition: pane.partition,
+        stagingParent: DEFAULT_STAGING_PARENT,
         title,
         discLabel: plan.discLabel || null,
         operationId,
       }),
-    })).then(data => data.staged);
+    })).then(data => {
+      pane.image = data.image;
+      return data.staged;
+    });
 
   if (plan.mode === "installer") {
     const result = await paneOperation(index, "Starting the emulator…", () =>
@@ -3473,8 +3892,8 @@ async function performInstall(index, sourceImageId, sourceName, plan) {
   }
 
   if (!plan.installNow) {
-    toast(`${title} staged as ${staged.discCount} disc(s). Install it when the set is complete.`);
     await loadDirectory(index);
+    toast(`${title} staged into ${staged.path} as ${staged.discCount} disc(s). Install it when the set is complete.`);
     return staged;
   }
 
@@ -3483,8 +3902,9 @@ async function performInstall(index, sourceImageId, sourceName, plan) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        slug: staged.slug,
+        name: staged.name,
         parent: plan.mode === "whdload" ? (plan.parent || "Games") : "",
+        stagingParent: DEFAULT_STAGING_PARENT,
         partition: pane.partition,
         operationId,
       }),
@@ -4090,7 +4510,7 @@ async function recoverPreviousSession(index) {
         <button class="button danger clear-all-sessions" type="button" ${recoverable.length ? "" : "disabled"}>Clear all previous</button>
       </div>
       <div class="help-note">Recovery reopens the server-side working copy with all completed changes. Clearing permanently deletes only the selected browser-owned working copies, never your original host files.</div>
-      <div class="modal-actions"><button class="button" value="cancel">Cancel</button><button class="button primary recover-session" value="recover" ${recoverable.length ? "" : "disabled"}>Recover session</button></div>
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary recover-session" value="recover" ${recoverable.length ? "" : "disabled"}>Recover session</button></div>
     `, async form => {
       const imageId = form.get("imageId");
       const restored = await api(`/api/images/${encodeURIComponent(imageId)}`);
@@ -4111,7 +4531,7 @@ async function recoverPreviousSession(index) {
     };
     clearSelected.addEventListener("click", async () => {
       const option = sessionSelect.selectedOptions[0];
-      if (!option || !confirm(`Permanently clear the working copy “${option.textContent}”?`)) return;
+      if (!option || !await confirmChoice("Clear this working copy?", `“${option.textContent}” will be removed permanently.`, { confirmLabel: "Clear working copy", danger: true })) return;
       clearSelected.disabled = true;
       try {
         await api("/api/images/recoverable", {
@@ -4129,7 +4549,7 @@ async function recoverPreviousSession(index) {
     });
     clearAll.addEventListener("click", async () => {
       const imageIds = [...sessionSelect.options].map(option => option.value);
-      if (!imageIds.length || !confirm(`Permanently clear all ${imageIds.length} previous working session${imageIds.length === 1 ? "" : "s"} shown here?`)) return;
+      if (!imageIds.length || !await confirmChoice("Clear every previous session?", `All ${imageIds.length} working session${imageIds.length === 1 ? "" : "s"} shown here will be removed permanently.`, { confirmLabel: "Clear them all", danger: true })) return;
       clearAll.disabled = true;
       try {
         const result = await api("/api/images/recoverable", {
@@ -4308,7 +4728,7 @@ async function showOnlineLibrary(index) {
       <label class="check"><input type="checkbox" name="createDirectory" checked> Create a drawer for each downloaded item</label><span class="field-note">Each item is installed into its own drawer beneath the current directory unless this is unticked.</span>
     </div>
     <div class="online-compatibility-review" aria-live="polite"></div>
-    <div class="modal-actions"><button class="button" value="cancel">Cancel</button><button class="button primary online-install" type="submit" disabled>Install selected</button></div>`, async form => {
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary online-install" type="submit" disabled>Install selected</button></div>`, async form => {
       const itemIds = form.getAll("catalogItem");
       if (!itemIds.length) { toast("Select one or more downloadable items first.", true); return false; }
       const signature = JSON.stringify({
@@ -4516,7 +4936,11 @@ function convertDMS(index) {
   async form => {
     const targetIndex = Number(form.get("targetPane"));
     if (!otherPaneIndexes(index).includes(targetIndex)) throw new Error("Choose another pane for the converted disk.");
-    if (panes[targetIndex].image?.dirty && !confirm(`Replace ${paneLabel(targetIndex)} without downloading its edited image?`)) return false;
+    if (panes[targetIndex].image?.dirty && !await confirmChoice(
+      "Replace an edited image?",
+      `${paneLabel(targetIndex)} has changes that have not been downloaded.`,
+      { confirmLabel: "Replace it", danger: true, note: "Its recoverable session is kept, so it can be reopened from Recover previous session." },
+    )) return false;
     const data = await paneOperation(index, "Rebuilding the disk from its DMS tracks…", () => api(`/api/images/${pane.image.id}/convert`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ format: form.get("format") })
@@ -4654,7 +5078,11 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
   async form => {
     const targetIndex = options.lockTarget ? defaultTarget : Number(form.get("targetPane"));
     if (!panes[targetIndex]) throw new Error("Choose a valid destination pane.");
-    if (panes[targetIndex].image?.dirty && !confirm(`Replace ${paneLabel(targetIndex)} without downloading its edited image?`)) return false;
+    if (panes[targetIndex].image?.dirty && !await confirmChoice(
+      "Replace an edited image?",
+      `${paneLabel(targetIndex)} has changes that have not been downloaded.`,
+      { confirmLabel: "Replace it", danger: true, note: "Its recoverable session is kept, so it can be reopened from Recover previous session." },
+    )) return false;
     const data = await api("/api/images/create", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -5277,10 +5705,10 @@ function assemblySourceEditor(entry, report) {
     shade.innerHTML = `<form class="editor-choice-card editor-assembly-card"><header><div><small>EXTERNAL ASSEMBLER WORKFLOW</small><h2>Reassemble ${esc(entry.name)}</h2></div></header><div class="help-warning"><strong>Dangerous operation:</strong> a successful build replaces the whole binary. Labels and comments are generated starting points, so review assembler syntax, origin and emitted length before continuing.</div><div class="field-grid two"><div class="field"><label>Architecture</label><input name="architecture" value="${esc(report.architecture)}" readonly></div><div class="field"><label>Origin</label><input name="origin" value="0x${Number(report.origin).toString(16).toUpperCase()}"></div></div><div class="field"><label>Assembly source</label><textarea name="source" rows="22" spellcheck="false">${esc(disassemblyAssemblySource(report))}</textarea></div><div class="modal-actions"><button type="button" class="button ghost" data-assembly-cancel>Cancel</button><button type="submit" class="button danger">Assemble and replace binary…</button></div></form>`;
     const finish = value => { shade.remove(); resolve(value); };
     shade.querySelector("[data-assembly-cancel]").onclick = () => finish(null);
-    shade.querySelector("form").onsubmit = event => {
+    shade.querySelector("form").onsubmit = async event => {
       event.preventDefault();
       const values = Object.fromEntries(new FormData(event.currentTarget));
-      if (!confirm("Replace the complete saved binary with the assembler output? The current image checkpoint can undo it.")) return;
+      if (!await confirmChoice("Replace the saved binary?", "The complete file is replaced with the assembler output.", { confirmLabel: "Assemble and replace", danger: true, note: "The current image checkpoint can undo it." })) return;
       finish(values);
     };
     shade.onkeydown = event => { if (event.key === "Escape") finish(null); else trapFocus(shade, event); };
@@ -5946,8 +6374,8 @@ function editorImageSearch(pane) {
 function installEditorCloseGuard(root, editor, closeEditor) {
   const closeButton = modal.querySelector(".modal-close");
   const dirty = () => !editor.readOnly && editor.value !== editor.dataset.savedValue;
-  const requestClose = () => {
-    if (dirty() && !confirm("Close this editor and discard its unsaved changes?")) return;
+  const requestClose = async () => {
+    if (dirty() && !await confirmChoice("Discard unsaved changes?", "This editor has changes that have not been written back to the image.", { confirmLabel: "Close and discard", danger: true })) return;
     if (dirty()) {
       editor.value = editor.dataset.savedValue;
       captureActiveEditorDocument();
@@ -6241,7 +6669,7 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
     const rule = targetNameRule(pane, entry.name);
     const suffix = entry.name.length < rule.limit ? "2" : "";
     const suggested = `${entry.name.slice(0, rule.limit - suffix.length)}${suffix}`;
-    const newName = prompt(`Save beside ${entry.name} as a new ${rule.label} file (maximum ${rule.limit} characters):`, suggested);
+    const newName = await promptValue("Save a copy beside this file", "New filename", { value: suggested, message: `A new ${rule.label} file is written next to ${entry.name}, leaving the original as it is.`, maxlength: rule.limit, confirmLabel: "Save copy", note: `Maximum ${rule.limit} characters.` });
     if (newName == null) return;
     try {
       const data = await api(`/api/images/${pane.image.id}/inspect`, {
@@ -6369,7 +6797,7 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
     else if (action === "project-notes") {
       if (target) return toast("Archive-member project notes become available after extracting the member into an image.", true);
       const current = await ensureProject();
-      const notes = prompt("Project notes for this file:", current.notes || "");
+      const notes = await promptValue("Project notes", "Notes", { value: current.notes || "", message: "Notes are stored in the private recoverable session, not in the file bytes.", confirmLabel: "Save notes", required: false, trim: false });
       if (notes != null) { current.notes = notes; project = await saveEditorProject(pane, path, current); toast("Project notes saved."); }
     }
     else if (action === "project-bookmark") {
@@ -6377,7 +6805,7 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
       const current = await ensureProject();
       const offset = await sourceByteOffset();
       if (offset == null) return toast("Save this new or renumbered BASIC line before bookmarking its byte offset.", true);
-      const name = prompt(`Bookmark saved-file offset ${offset}:`, isBasic ? `BASIC line ${editor.value.slice(0, editor.selectionStart).split("\n").at(-1)?.match(/^\s*(\d+)/)?.[1] || "cursor"}` : `Offset ${offset}`);
+      const name = await promptValue("Add a bookmark", "Bookmark name", { value: isBasic ? `BASIC line ${editor.value.slice(0, editor.selectionStart).split("\n").at(-1)?.match(/^\s*(\d+)/)?.[1] || "cursor"}` : `Offset ${offset}`, message: `The bookmark points at saved-file offset ${offset}.`, confirmLabel: "Add bookmark" });
       if (name) { current.bookmarks = [...(current.bookmarks || []), { offset, name, note: "" }]; project = await saveEditorProject(pane, path, current); toast("Bookmark saved."); }
     }
     else if (action === "project-manage") {
@@ -6484,8 +6912,8 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     selection.removeAllRanges();
     selection.addRange(range);
   };
-  const findSource = () => {
-    const needle = prompt("Find in disassembly:");
+  const findSource = async () => {
+    const needle = await promptValue("Find in disassembly", "Text to find", { placeholder: "Instruction, label or comment", confirmLabel: "Find" });
     if (!needle) return;
     const line = [...root.querySelectorAll(".disassembly-source-line")].find(item => item.textContent.toLocaleLowerCase().includes(needle.toLocaleLowerCase()));
     root.querySelectorAll(".disassembly-source-line.found").forEach(item => item.classList.remove("found"));
@@ -6564,7 +6992,7 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
   const markRegion = async kind => {
     const range = selectedRange();
     if (!range) return toast("Select one or more disassembly lines first.", true);
-    const name = prompt(`Name this ${kind} region:`, `${kind}_${range.start.toString(16).toUpperCase()}`);
+    const name = await promptValue(`Name this ${kind} region`, "Region name", { value: `${kind}_${range.start.toString(16).toUpperCase()}`, message: `Covers file offsets ${range.start} to ${range.end}.`, confirmLabel: "Mark region", required: false });
     if (name == null) return;
     project.regions = [...(project.regions || []).filter(row => Number(row.end) <= range.start || Number(row.start) >= range.end), { start: range.start, end: range.end, kind, name: name || kind, width: 8 }];
     await persistProject(`Marked ${kind} region`, `${range.start}-${range.end}`);
@@ -6602,7 +7030,7 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     else if (action === "rename-symbol") {
       const row = reportRow(selectedLines[0]);
       if (!row) return toast("Select a disassembly line first.", true);
-      const name = prompt(`Symbol for &${Number(row.address).toString(16).toUpperCase()}:`, row.label || `loc_${Number(row.address).toString(16).toUpperCase()}`);
+      const name = await promptValue("Rename this symbol", "Symbol name", { value: row.label || `loc_${Number(row.address).toString(16).toUpperCase()}`, message: `The label used for address &${Number(row.address).toString(16).toUpperCase()} throughout the disassembly.`, confirmLabel: "Rename symbol" });
       if (name) { project.symbols = { ...(project.symbols || {}), [String(Number(row.address))]: name }; await persistProject("Renamed symbol", `&${Number(row.address).toString(16).toUpperCase()} = ${name}`); await refreshProjectListing(); }
     }
     else if (action === "fold-toggle-all") intelligence?.toggleAll();
@@ -6636,20 +7064,24 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     else if (action.startsWith("mark-")) await markRegion(action.slice(5));
     else if (action === "bookmark") {
       const range = selectedRange(); if (!range) return toast("Select a disassembly line first.", true);
-      const name = prompt(`Bookmark file offset ${range.start}:`, `Offset ${range.start}`);
-      if (name) { project.bookmarks = [...(project.bookmarks || []), { offset: range.start, name, note: prompt("Optional bookmark note:", "") || "" }]; await persistProject("Added bookmark", name); await refreshProjectListing(); }
+      const name = await promptValue("Add a bookmark", "Bookmark name", { value: `Offset ${range.start}`, message: `The bookmark points at file offset ${range.start}.`, confirmLabel: "Add bookmark" });
+      if (name) {
+        const note = await promptValue("Bookmark note", "Note", { message: `An optional note kept with “${name}”.`, confirmLabel: "Add bookmark", required: false, trim: false });
+        project.bookmarks = [...(project.bookmarks || []), { offset: range.start, name, note: note || "" }];
+        await persistProject("Added bookmark", name); await refreshProjectListing();
+      }
     }
     else if (action === "comment") {
       const range = selectedRange(); if (!range) return toast("Select a disassembly line first.", true);
       const key = String(range.start);
-      const comment = prompt(`Comment for file offset ${range.start}:`, project.comments?.[key] || "");
+      const comment = await promptValue("Comment this line", "Comment", { value: project.comments?.[key] || "", message: `Kept against file offset ${range.start}. Leave it empty to remove the comment.`, confirmLabel: "Save comment", required: false, trim: false });
       if (comment == null) return;
       project.comments = { ...(project.comments || {}) };
       if (comment.trim()) project.comments[key] = comment.trim(); else delete project.comments[key];
       await persistProject(comment.trim() ? "Updated line comment" : "Removed line comment", `Offset ${range.start}`);
       await refreshProjectListing();
     }
-    else if (action === "notes") { const notes = prompt("Project notes for this file:", project.notes || ""); if (notes != null) { project.notes = notes; await persistProject("Updated project notes"); toast("Project notes saved."); } }
+    else if (action === "notes") { const notes = await promptValue("Project notes", "Notes", { value: project.notes || "", message: "Notes are stored in the private recoverable session, not in the file bytes.", confirmLabel: "Save notes", required: false, trim: false }); if (notes != null) { project.notes = notes; await persistProject("Updated project notes"); toast("Project notes saved."); } }
     else if (action === "symbols-export") {
       const body = Object.entries(project.symbols || {}).sort((a, b) => Number(a[0]) - Number(b[0])).map(([address, name]) => `&${Number(address).toString(16).toUpperCase()} = ${name}`).join("\n");
       downloadDocument(`${entry.name}.symbols`, body, "text/plain;charset=utf-8");
@@ -6997,7 +7429,7 @@ async function showGuardedCheatPatch(root, pane, path, report, finding, target =
         const preview = await api(`/api/images/${pane.image.id}/cheat-patch/preview`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(documentValue) });
         retainCheatPatch(preview.patch);
         downloadDocument(`${String(report.title || "cheat").replace(/[^A-Za-z0-9_-]+/g, "-")}.affcheat.json`, JSON.stringify(preview.patch, null, 2));
-        if (!window.confirm(`This is dangerous: apply ${preview.patch.replacementHex} at file offset &${Number(preview.patch.offset).toString(16).toUpperCase()}? An automatic image checkpoint will be created first.`)) return;
+        if (!await confirmChoice("Apply this patch?", `${preview.patch.replacementHex} will be written at file offset &${Number(preview.patch.offset).toString(16).toUpperCase()}.`, { confirmLabel: "Apply patch", danger: true, note: "An automatic image checkpoint is created first." })) return;
         const applied = await api(`/api/images/${pane.image.id}/cheat-patch/apply`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patch: preview.patch, partition: pane.partition, side: pane.side }) });
         pane.image = applied.image;
         close();
@@ -7036,7 +7468,7 @@ function showCheatLibrary(root, pane, path, target = null) {
   }));
   shade.querySelectorAll("[data-cheat-apply]").forEach(button => button.addEventListener("click", async () => {
     const patch = rows[Number(button.dataset.cheatApply)];
-    if (!window.confirm(`This is dangerous: apply “${patch.title}” to the current file only if its exact SHA-256 and guarded bytes match?`)) return;
+    if (!await confirmChoice("Apply this guarded patch?", `“${patch.title}” will be applied to the current file.`, { confirmLabel: "Apply if it matches", danger: true, note: "It is applied only if the file's exact SHA-256 and guarded bytes match." })) return;
     button.disabled = true;
     try {
       const applied = await api(`/api/images/${pane.image.id}/cheat-patch/apply`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patch, path, partition: pane.partition, side: pane.side, member: target?.context?.member }) });
@@ -7048,8 +7480,8 @@ function showCheatLibrary(root, pane, path, target = null) {
     } catch (error) { toast(error.message, true); }
     finally { button.disabled = false; }
   }));
-  shade.querySelector("[data-cheat-clear]")?.addEventListener("click", () => {
-    if (!window.confirm("Clear this browser profile's guarded cheat library? Image files and checkpoints are not affected.")) return;
+  shade.querySelector("[data-cheat-clear]")?.addEventListener("click", async () => {
+    if (!await confirmChoice("Clear the cheat library?", "Every guarded patch stored for this browser profile is removed.", { confirmLabel: "Clear library", danger: true, note: "Image files and checkpoints are not affected." })) return;
     persistentStorage.removeItem(CHEAT_LIBRARY_KEY);
     close();
     toast("Private cheat library cleared");
@@ -7354,20 +7786,29 @@ async function showCollectionCatalogue(initialIndex = null) {
       if (!file || file.size > 128 * 1024 * 1024) return toast("Collection backups are limited to 128 MiB.", true);
       try {
         const document = JSON.parse(await file.text());
-        const replace = confirm("Replace the private catalogue with this backup? Choose Cancel to merge it instead.");
-        const count = await collectionCatalogue.importBackup(document, replace);
+        const choice = await overlayDialog(`<section class="editor-choice-card overlay-dialog">
+            <h2 id="overlay-dialog-title">Import this backup</h2>
+            <p>${esc(file.name)} can replace what this browser holds, or be merged into it.</p>
+            <div class="help-note">Merging keeps every record already here and adds the ones the backup carries. Replacing discards them first. Image files are not affected either way.</div>
+            <div class="modal-actions">
+              <button type="button" class="button ghost" data-choice="cancel">Cancel</button>
+              <button type="button" class="button danger" data-choice="replace">Replace catalogue</button>
+              <button type="button" class="button primary" data-choice="merge">Merge into catalogue</button>
+            </div></section>`);
+        if (!choice || choice === "cancel") return;
+        const count = await collectionCatalogue.importBackup(document, choice === "replace");
         toast(`${count} collection image${count === 1 ? "" : "s"} imported.`);
         await showCollectionCatalogue(initialIndex);
       } catch (error) { toast(error.message, true); }
     };
     modalContent.querySelector("[data-remove-collection]").onclick = async () => {
       const ids = selectedIds();
-      if (!ids.length || !confirm(`Remove ${ids.length} selected collection record${ids.length === 1 ? "" : "s"}? Image files are not affected.`)) return;
+      if (!ids.length || !await confirmChoice("Remove the selected records?", `${ids.length} collection record${ids.length === 1 ? "" : "s"} will be removed.`, { confirmLabel: `Remove ${ids.length} record${ids.length === 1 ? "" : "s"}`, danger: true, note: "Image files are not affected." })) return;
       await collectionCatalogue.remove(ids);
       await showCollectionCatalogue(initialIndex);
     };
     modalContent.querySelector("[data-clear-collection]").onclick = async () => {
-      if (!confirm("Clear this browser's complete private collection catalogue? Image files are not affected.")) return;
+      if (!await confirmChoice("Clear the whole catalogue?", "Every record in this browser's private collection catalogue is removed.", { confirmLabel: "Clear catalogue", danger: true, note: "Image files are not affected." })) return;
       await collectionCatalogue.clear();
       await showCollectionCatalogue(initialIndex);
     };
@@ -7572,7 +8013,7 @@ function showWorkspaceSearch() {
     <div class="workspace-search-controls"><input type="search" name="workspaceQuery" placeholder="Name, metadata, SHA-256 or readable text" required autocomplete="off" autofocus><button class="button primary" type="button" data-run-workspace-search>Search ${searchable.length} image${searchable.length === 1 ? "" : "s"}</button></div>
     <p class="workspace-search-status" aria-live="polite">Searches catalogues and bounded file content in each distinct open filesystem, including every partition of an open hard drive. Enter an 8 to 64 digit SHA-256 prefix to identify exact content.</p>
     <div class="editor-image-search-results workspace-search-results"></div>
-    <div class="modal-actions"><button class="button ghost" value="cancel">Close</button></div>
+    <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div>
   </div>`);
   const input = modalContent.querySelector('[name="workspaceQuery"]');
   const status = modalContent.querySelector(".workspace-search-status");
@@ -7720,7 +8161,7 @@ async function renderWorkbench(section = "profiles") {
   const imageOptions = panes.map((pane, index) => pane.image ? `<option value="${index}">${esc(paneLabel(index))}</option>` : "").join("");
   showModal(`<div class="workbench-dialog"><header><div><small>AMIGA FILE FORGE</small><h2>Workbench</h2></div><select name="workbenchSection"><option value="profiles" ${section === "profiles" ? "selected" : ""}>Hardware profiles</option><option value="recipes" ${section === "recipes" ? "selected" : ""}>Import recipes</option><option value="project" ${section === "project" ? "selected" : ""}>Portable project</option></select></header>
     ${section === "profiles" ? `<div class="workbench-profile-picker field"><label>Hardware profile</label><select name="profileSelect">${profiles.map((profile, index) => `<option value="${index}">${esc(profile.name)}</option>`).join("")}</select><small>Start with a common system, then build the exact target from compatible additions.</small></div><div class="workbench-grid workbench-profile-grid"><section><div class="field"><label>Profile name</label><input name="profileName" value="${esc(profiles[0]?.name || "My Amiga setup")}"></div><div class="field"><label>Base machine</label><select name="profileMachine">${hardware.machines.map(machine => `<option value="${esc(machine.id)}">${esc(machine.label)} · ${esc(machine.baseRam)} · ${esc(machine.processor)}</option>`).join("")}</select></div><div class="field"><label>Online Library filter</label><select name="profileCatalogMachine">${ONLINE_MACHINES.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label>Filing system</label><select name="profileFs">${WORKBENCH_FILE_SYSTEMS.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label>Target validation</label><select name="profileTarget"><option value="auto">Automatic</option><option value="a500-ofs">Amiga 500 / 2000 · Kickstart 1.3, OFS</option><option value="a1200-ffs">Amiga 600 / 1200 · Kickstart 3.x, FFS</option><option value="hardfile">UAE hardfile · HDA + GEO</option><option value="amigaos">Amiga 3000 / 4000 · AmigaOS hard drive</option></select></div><div class="field"><label>FastFileSystem build</label><select name="profileHandler"><option value="none">Not used</option><option value="rom">FastFileSystem in Kickstart</option><option value="rdb">FastFileSystem loaded from the Rigid Disk Block</option></select></div><div class="field"><label>Expected stack size</label><input name="profilePage" value="${esc(profiles[0]?.page || "8192")}"></div><section class="workbench-addon-builder"><header><div><small>COMPATIBLE HARDWARE</small><h3>Add-ons</h3></div><span data-addon-summary></span></header><div class="hardware-addon-groups" data-hardware-addons></div></section><details class="workbench-emulator-settings" open><summary>Emulator and debugger integration</summary><div class="help-note"><strong>Managed tools:</strong> Amiga File Forge translates supported additions into emulator models, writable banks, CPU accelerators, controller settings and expansion cards. Items marked Validation only still affect compatibility analysis but are not falsely claimed as emulated.</div><div class="workbench-emulator-controls"><div class="field"><label>Emulator</label><select name="profileEmulator">${WORKBENCH_EMULATORS.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label>Debugger</label><select name="profileDebugger">${WORKBENCH_DEBUGGERS.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label>Emulated RAM</label><select name="profileEmulatorRam"><option value="auto">From base machine and add-ons</option><option value="32K">32 KiB</option><option value="64K">64 KiB</option><option value="128K">128 KiB</option><option value="1M">1 MiB</option></select></div><div class="field"><label>Startup action</label><select name="profileEmulatorBoot"><option value="auto">Use image default</option><option value="boot">Boot from this image</option><option value="catalogue">Open catalogue only</option></select></div></div></details><div class="field"><label>Apply to open pane</label><select name="profilePane">${imageOptions || '<option value="">No open images</option>'}</select></div><div class="modal-actions"><button type="button" class="button" data-save-profile>Save profile</button><button type="button" class="button primary" data-apply-profile ${imageOptions ? "" : "disabled"}>Apply profile</button></div></section></div>` : section === "recipes" ? `<div class="workbench-grid"><aside>${recipes.map((recipe, index) => `<button type="button" data-recipe-index="${index}"><b>${esc(recipe.name)}</b><small>${esc(recipe.naming)} · ${recipe.addMenu ? "menu" : "off-menu"}</small></button>`).join("") || "<p>No saved recipes yet.</p>"}</aside><section><div class="field"><label>Recipe name</label><input name="recipeName" value="Collection import"></div><div class="field"><label>Directory naming</label><select name="recipeNaming"><option value="source">Use source titles</option><option value="generic">DISC-0000 sequence</option></select></div><div class="field"><label>Group prefix</label><input name="recipeGroup" maxlength="10" value="DISCS"></div><label class="check-field"><input type="checkbox" name="recipeOnline" checked> Use online metadata for ambiguous titles</label><label class="check-field"><input type="checkbox" name="recipeCompat" checked> Apply safe OFS to FFS compatibility rewrites</label><label class="check-field"><input type="checkbox" name="recipeMenu" checked> Offer imported titles to a menu</label><div class="modal-actions"><button type="button" class="button primary" data-save-recipe>Save recipe</button></div></section></div>` : `<div class="project-tools"><p>A project description preserves the pane layout, working session references, current paths, profiles and recipes. Image bytes remain in their private recoverable sessions and normal timestamped save ZIPs. Theme remains a browser preference.</p><div class="modal-actions"><button type="button" class="button" data-export-project>Export project JSON</button><label class="button primary">Import project JSON<input type="file" accept="application/json,.json" data-import-project hidden></label></div><hr><h3>Deterministic workflow</h3><p>Export the earliest retained pre-change checkpoint identity, a guarded patch containing every later filesystem change, and the exact hashes expected from a successful rebuild. Original image bytes are not included.</p><label class="field"><span>Completed image</span><select name="workflowPane">${imageOptions || '<option value="">No open images</option>'}</select></label><div class="help-note">The CLI verifies the base image, optional GEO companion, patch and final saved output. DMS and HFE workflows remain unavailable until their container-level reconstruction is provably lossless.</div><div class="modal-actions"><button type="button" class="button primary" data-export-workflow ${imageOptions ? "" : "disabled"}>Export workflow bundle</button></div></div>`}
-    <div class="modal-actions"><button class="button ghost" value="cancel">Close workbench</button></div></div>`, null, { replace: modal.open });
+    <div class="modal-actions"><button class="button primary" value="cancel">Close workbench</button></div></div>`, null, { replace: modal.open });
   modalContent.querySelector('[name="workbenchSection"]').onchange = event => renderWorkbench(event.target.value);
   if (section === "profiles") wireProfileWorkbench(profiles, activeProfile.index, hardware);
   if (section === "recipes") wireRecipeWorkbench(recipes);
@@ -7946,11 +8387,11 @@ document.documentElement.dataset.theme = initialTheme;
 const themeToggle = document.querySelector("#themeToggle");
 document.querySelector("#addPaneButton").onclick = addPane;
 const helpMenu = document.querySelector("#helpMenu");
+// The header menu behaves like the pane menus: it closes when the pointer
+// moves off it, when something outside it is clicked and on Escape.
+wireDismissibleMenu(helpMenu);
 document.querySelector("#helpGuideButton").onclick = () => { helpMenu.open = false; showHelp(); };
 document.querySelector("#aboutButton").onclick = () => { helpMenu.open = false; showAbout(); };
-document.addEventListener("pointerdown", event => {
-  if (helpMenu.open && !event.target.closest("#helpMenu")) helpMenu.open = false;
-});
 document.addEventListener("keydown", event => {
   if (event.key === "Escape" && helpMenu.open) {
     helpMenu.open = false;

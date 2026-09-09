@@ -830,7 +830,11 @@ window.AmigaHexEditor = (() => {
 
     async function fillSelection() {
       if (image.readOnly) return;
-      const value = prompt("Fill the selected bytes with which hex value?", "00");
+      const value = await window.AmigaUI.promptValue("Fill the selection", "Hex value", {
+        value: "00", placeholder: "00", maxlength: 2, pattern: "[0-9A-Fa-f]{1,2}",
+        message: "Every selected byte is set to this value.",
+        confirmLabel: "Fill selection",
+      });
       if (value == null) return;
       const compact = value.trim().replace(/^(?:0x|&)/i, "");
       if (!/^[0-9a-f]{2}$/i.test(compact)) return notify("Enter one byte from 00 to FF.", true);

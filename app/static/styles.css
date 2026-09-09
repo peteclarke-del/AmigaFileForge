@@ -956,6 +956,10 @@ dialog:has(.patch-preflight-dialog) { width: min(760px, calc(100vw - 30px)); }
 .editor-document-state { color: var(--teal); font-weight: 700; }
 .editor-choice-shade { position: absolute; z-index: 10050; inset: 0; display: grid; place-items: center; padding: 20px; border-radius: inherit; background: var(--modal-backdrop); }
 .editor-choice-shade.editor-global-overlay { position: fixed; border-radius: 0; }
+/* The shared confirm, notice and prompt dialogs cover the viewport whether
+   they were appended to the page or into an open <dialog>, so their card is
+   centred against the screen and never clipped by a short host. */
+.editor-choice-shade.overlay-dialog-shade { position: fixed; border-radius: 0; }
 .editor-choice-card { width: min(480px, 100%); padding: 20px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); }
 .editor-choice-card p { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .dms-structural-review { width: min(920px, calc(100vw - 3rem)); max-height: min(720px, calc(100vh - 3rem)); overflow: auto; }
@@ -1071,10 +1075,34 @@ body:has(dialog[open].failed) .pane .loading { display: none; }
 .modal-content h2, #modalContent h2 { margin: 0 0 7px; font-size: 21px; letter-spacing: -.03em; }
 #modalContent > .modal-heading, #modalContent > h2:first-child { padding-right: 34px; }
 #modalContent > p { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 0 0 14px; }
+/* One definition of a form field, used by every dialog in the application.
+   These rules cover text inputs, selects and textareas together: a textarea
+   styled by the browser instead of by this file is immediately obvious next
+   to an input that is not, and several dialogs put the two side by side. */
 .field { display: grid; gap: 5px; margin: 10px 0; }
 .field label { font: 500 10px DM Mono, monospace; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
-.field input, .field select { width: 100%; border: 1px solid var(--input-border); border-radius: 8px; padding: 11px; outline: none; background: var(--input-background); color: var(--ink); }
-.field input:focus, .field select:focus { border-color: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 18%, transparent); }
+.field input, .field select, .field textarea { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid var(--input-border); border-radius: 8px; padding: 11px; outline: none; background: var(--input-background); color: var(--ink); font: inherit; }
+.field textarea { resize: vertical; font: 11px/1.5 DM Mono, monospace; tab-size: 4; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 18%, transparent); }
+.field input:disabled, .field select:disabled, .field textarea:disabled { opacity: .55; cursor: not-allowed; }
+/* A read-only value is still a value, so it is shown as one rather than as a
+   field that merely refuses to be typed into. */
+.field input[readonly], .field textarea[readonly] { border-style: dashed; background: var(--cream); color: var(--muted); }
+/* Hint text under a control. Written as <small> throughout the dialogs, and
+   left to the browser until now, so the same hint was a different size
+   depending on which dialog it appeared in. */
+.field > small, .check-field > small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.field > small code, .check-field > small code { font-size: 10px; }
+/* Two fields that belong together on one line. Used by several dialogs and
+   previously undefined, so every one of them stacked instead. */
+.field-grid { display: grid; gap: 0 12px; align-items: start; }
+.field-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.field-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.field-grid > .field { min-width: 0; }
+.field-grid > .wide { grid-column: 1 / -1; }
+@media (max-width: 620px) {
+  .field-grid.two, .field-grid.three { grid-template-columns: minmax(0, 1fr); }
+}
 .prefilled-file { color: var(--teal); font: 10px DM Mono, monospace; }
 .file-selection-summary { display: grid; gap: 4px; min-height: 38px; padding: 9px 11px; border: 1px dashed var(--line); border-radius: 8px; background: var(--cream); color: var(--muted); font: 10px/1.45 DM Mono, monospace; }
 .file-selection-summary.compact { min-height: 31px; padding: 6px 9px; }
@@ -1097,6 +1125,22 @@ body:has(dialog[open].failed) .pane .loading { display: none; }
 .install-mode b { color: var(--ink); font-size: 11px; }
 .install-mode small { color: var(--muted); font-size: 10px; line-height: 1.45; }
 .install-mode:has(input:checked) { border-color: var(--focus-ring); background: var(--paper); }
+/* Installing AmigaOS from the operator's own floppies. Each part of the
+   release gets a row saying what it is, where it lands and which of the discs
+   read is going to play it, because a set assembled wrongly produces a drive
+   that looks complete and does not boot. */
+.workbench-disc-choosers { display: flex; flex-wrap: wrap; gap: 8px; }
+.workbench-disc-roles { display: grid; gap: 6px; margin: 12px 0 4px; }
+.workbench-disc-role { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 240px); align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--cream); }
+.workbench-disc-role > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.workbench-disc-role b { color: var(--ink); font-size: 11px; }
+.workbench-disc-role small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.workbench-disc-role select { min-width: 0; border: 1px solid var(--input-border); border-radius: 7px; padding: 8px; background: var(--input-background); color: var(--ink); font: inherit; }
+.workbench-disc-role:has(select:not([value=""])) { border-color: color-mix(in srgb, var(--teal) 45%, var(--line)); }
+dialog:has(.workbench-disc-roles) { width: min(620px, calc(100vw - 30px)); }
+@media (max-width: 620px) {
+  .workbench-disc-role { grid-template-columns: minmax(0, 1fr); }
+}
 .staged-title-list { display: flex; flex-direction: column; gap: 7px; max-height: 340px; overflow-y: auto; }
 .staged-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--cream); }
 .staged-title > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -1106,7 +1150,19 @@ body:has(dialog[open].failed) .pane .loading { display: none; }
 .staged-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .file-row.empty-slot { color: var(--empty-text); }
 .file-row.empty-slot .file-icon { background: var(--empty-icon); color: var(--empty-icon-text); border: 1px dashed var(--input-border); }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+/* Every dialog ends the same way: actions on the right, the confirming one
+   last, wrapping rather than overflowing when a dialog offers several. */
+.modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 16px; }
+.modal-actions > .button { flex: 0 0 auto; }
+
+/* The shared confirm, notice and single-value dialogs. They layer over an open
+   <dialog> or over the page, and they have to read as part of the same
+   application as the dialogs they sit on top of, so they borrow the modal's
+   heading and body typography rather than inventing their own. */
+.overlay-dialog h2 { margin: 0 0 7px; font-size: 21px; letter-spacing: -.03em; }
+.overlay-dialog > p { margin: 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.overlay-dialog .field:first-of-type { margin-top: 14px; }
+.overlay-dialog-danger h2 { color: var(--danger); }
 .physical-floppy-context-menu { position: fixed; z-index: 1600; min-width: 230px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: 0 12px 35px var(--modal-shadow); }
 .physical-floppy-context-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .physical-floppy-context-menu button:hover, .physical-floppy-context-menu button:focus-visible { background: var(--cream); outline: 2px solid var(--focus-ring); }

@@ -611,7 +611,7 @@ function showHelp() {
               <ol>
                 <li>Open the destination partition on the hard drive. A floppy pane has nowhere to install to, and a partition table is not a volume, so neither offers the option.</li>
                 <li>Drag a disc image in, or use <strong>File &rarr; Insert File</strong>, then set <strong>Import as</strong> to <strong>Install it onto this drive</strong>.</li>
-                <li>Give the title a name. Discs staged under the same name are merged into one tree, so a multi-disc set stays one thing to install.</li>
+                <li>Give the title a name. Discs staged under the same name are merged into one tree in <code>Storage/Install/</code> on the drive, so a multi-disc set stays one thing to install.</li>
                 <li>Choose a method, then confirm. Every method stages the disc first, so an install that fails halfway has still preserved its contents.</li>
               </ol>
             </div>
@@ -691,12 +691,26 @@ function showHelp() {
             <div class="help-task">
               <h4>Stage it for installing later</h4>
               <ol>
-                <li>The default, and usually the right answer for a multi-disc set. Each disc is extracted into a staging drawer named after the title, and later discs merge into the same tree.</li>
+                <li>The default, and usually the right answer for a multi-disc set. Each disc is extracted into <code>Storage/Install/</code> on the drive you are building, in a drawer named after the title, and later discs merge into the same tree.</li>
+                <li>The discs go onto the target image, not into a directory on this computer. That is the point: boot the drive in the emulator, or put it in a real Amiga, and the material is already there to finish the install with.</li>
                 <li>Nothing is emulated, downloaded or guessed at, so this always works and always works quickly.</li>
-                <li>Where two discs carry the same path with different contents, the first is kept and the later one is filed under <code>alternates/</code>. A set is never reduced to whichever disc you staged last.</li>
-                <li>Protection bits and comments travel in the sidecar files written beside the payload, so a staged tree brought back in later still has them.</li>
-                <li>Finish the install here when the set is complete, or copy the staging drawer to a real Amiga and finish it there.</li>
+                <li>Where two discs carry the same path with different contents, the first is kept and the later one is filed under <code>Storage/Install/Forge-Staging/</code>. A set is never reduced to whichever disc you staged last.</li>
+                <li>Protection bits and comments are written onto the volume with the files, because an Amiga filing system has somewhere to put them.</li>
+                <li>Finish the install here when the set is complete, or run the title&rsquo;s own installer against the staging drawer on the machine itself.</li>
               </ol>
+            </div>
+            <div class="help-task">
+              <h4>Install Workbench onto a drive</h4>
+              <ol>
+                <li>A blank drive is not a machine you can use. Choose <strong>Tools &rarr; Install Workbench</strong> with a partition open, and point at the folder holding your own Workbench floppy images.</li>
+                <li>Amiga File Forge does not ship AmigaOS and cannot fetch it. Use the ADF, ADZ, DMS or HFE images of the disks you own.</li>
+                <li>Disks are recognised by the volume name inside each image, not by its file name, so a folder of inconsistently named dumps is read correctly and anything that is not part of a release is ignored.</li>
+                <li>The release is decided from the Workbench disk and every other disk is matched to it. Mixing releases produces a system whose parts disagree with each other, so a disk from another release is left out rather than installed.</li>
+                <li>Workbench and Extras merge into the root; Fonts, Locale, Storage, Classes, Backdrops and Install become drawers of their own. Workbench is copied first, so its full <code>C:</code>, <code>L:</code> and <code>Libs:</code> are not replaced by the cut-down copies the other disks carry.</li>
+                <li>Files already on the volume are left alone, so an existing drive is added to rather than replaced, and installing twice does not undo work done in between.</li>
+                <li>Change which disc plays each part before installing if the automatic choice is wrong. Only the Workbench disk is required.</li>
+              </ol>
+              <figure><img src="/help/workbench-install.png" alt="Install Workbench dialog listing each part of an AmigaOS release beside the disc chosen to supply it"><figcaption>Six images were read and five recognised. The disks are matched on the volume name inside each image, so file names that say nothing about their contents still resolve, and a disc that is not part of a release is named as ignored rather than installed by mistake.</figcaption></figure>
             </div>
             <div class="help-task">
               <h4>Install with WHDLoad</h4>
@@ -719,13 +733,14 @@ function showHelp() {
             <div class="help-task">
               <h4>Finish a staged set later</h4>
               <ol>
-                <li>Choose <strong>Tools &rarr; Staged installations</strong>. Every title waiting is listed with its discs and where its files are.</li>
-                <li>Open the partition you want it on, then select <strong>Install here</strong>. The drawer name is yours to set.</li>
+                <li>Open the partition holding the staged discs, then choose <strong>Tools &rarr; Staged installations</strong>. The list is read off that drive, so a drive built on another machine still reports what is waiting on it.</li>
+                <li>Select <strong>Install here</strong>. The title is moved out of the staging drawer into the one you name, keeping the protection bits and comments it already has.</li>
                 <li>Any file that differed between two discs is named, so a set that needed a judgement call says so rather than looking complete.</li>
-                <li>Discarding a title deletes only the extracted copies. The original images are untouched.</li>
+                <li>Discarding a title deletes the staged copies from the drive. The original disc images are untouched, so the set can be staged again.</li>
               </ol>
+              <figure><img src="/help/staged-installations.png" alt="Staged installations dialog listing one waiting title, its discs and the drawer it occupies on the drive"><figcaption>The staging drawer is on the drive itself, so the same list appears whether you open the image here or boot it. Installing moves the title into the drawer named above; discarding removes only the staged copies.</figcaption></figure>
             </div>
-            <div class="help-note"><strong>Undo:</strong> installing a staged title, installing WHDLoad and adding a slave each take a checkpoint before they run. Staging changes no image, so it takes none.</div>
+            <div class="help-note"><strong>Undo:</strong> staging a disc, installing a staged title, installing Workbench, installing WHDLoad and adding a slave each take a checkpoint before they run, because each one writes to a volume.</div>
           </section>
           <section id="help-maintenance">
             <h3>Check, compact and monitor operations</h3>
