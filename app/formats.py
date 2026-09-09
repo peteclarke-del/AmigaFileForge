@@ -29,6 +29,11 @@ SCP_EXTENSIONS = {".scp"}
 #: is looked for at run time rather than shipped.
 IPF_EXTENSIONS = {".ipf"}
 
+#: CD images. AmigaOS 3.5, 3.9 and the OS4 releases were all published on CD,
+#: along with a great deal of other Amiga material, so a disc is opened and
+#: browsed like any other read-only container.
+ISO_EXTENSIONS = {".iso", ".cdr"}
+
 #: Kickstart, cartridge and expansion ROM images.
 ROM_EXTENSIONS = {
     ".rom",

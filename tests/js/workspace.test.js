@@ -227,7 +227,14 @@ test("pane presentation formats images and capacity through one component", () =
   });
   assert.equal(view.paneFormat({ kind: "ofs", name: "demo.adz" }), "ADZ");
   assert.match(view.capacityMarkup({ available: true, total: 100, used: 75, free: 25, unit: "bytes" }), /capacity warning/);
-  assert.match(view.crumbs("$.Games"), /data-path="\$"/);
+  // AmigaDOS separates path components with "/" and writes a volume root as
+  // a bare colon. A full stop is an ordinary character in an Amiga filename,
+  // so a drawer named "OS-Version3.5" is one crumb rather than two.
+  assert.match(view.crumbs(""), /class="crumb current" data-path=""/);
+  assert.match(view.crumbs("Games/Demos"), /data-path="Games"/);
+  assert.match(view.crumbs("Games/Demos"), /data-path="Games\/Demos"/);
+  assert.equal((view.crumbs("OS-Version3.5").match(/<button/g) || []).length, 2);
+  assert.match(view.crumbs("OS-Version3.5"), /data-path="OS-Version3.5"/);
 });
 
 test("the pane export control follows the formats the service offers", () => {
