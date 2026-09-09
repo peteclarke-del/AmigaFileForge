@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
   <releases>
+    <release version="1.3.0" date="2026-09-09">
+      <description>
+        <p>Prepares a hard drive with AmigaOS from your own Workbench floppies, recognising each disk by the volume name inside it. Stages a title's discs into a drawer on the target image rather than on the host, so the install can be finished in an emulator or on the real machine. Fixes an import review that abandoned every selected file without saying so.</p>
+      </description>
+    </release>
     <release version="1.2.0" date="2026-09-06">
       <description>
         <p>Adds installing a floppy onto a hard drive, by staging a multi-disc set, by installing WHDLoad, or by running the title's own installer under emulation. Reads LHA archives without an external decompressor.</p>
