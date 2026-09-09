@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
   <releases>
+    <release version="1.4.0" date="2026-09-09">
+      <description>
+        <p>Opens CD images. A disc browses as a read-only pane, read from the file rather than into memory, and carries across the protection bits and comments that Amiga CDs record. Recognises the AmigaOS 3.5 and 3.9 discs and checks the processor and the target drive before an emulator is started, then boots the drive with the disc attached and the CD driver switched on so the disc actually appears.</p>
+      </description>
+    </release>
     <release version="1.3.1" date="2026-09-09">
       <description>
         <p>Fixes choosing a folder in the Linux desktop application, which could not select one at all and so recognised a single disc when the Workbench install was pointed at a collection. Explains a disc that boots an operating system of its own rather than reporting it as damaged.</p>
