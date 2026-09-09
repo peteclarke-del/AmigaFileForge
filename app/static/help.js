@@ -705,6 +705,17 @@ function showHelp() {
                 <li>A blank drive is not a machine you can use. Choose <strong>Tools &rarr; Install Workbench</strong> with a partition open, and point at the folder holding your own Workbench floppy images.</li>
                 <li>Amiga File Forge does not ship AmigaOS and cannot fetch it. Use the ADF, ADZ, DMS or HFE images of the disks you own, including the zipped-per-disk form a TOSEC collection uses.</li>
                 <li>CD images open too. A disc opens as a read-only pane you can browse and copy from, with the protection bits and comments an Amiga CD records read from its <code>AS</code> entries.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>Install AmigaOS 3.5 or 3.9 from CD</h4>
+              <ol>
+                <li>These releases are not installed the way 3.1 is. The disc carries a Commodore Installer script that runs on the Amiga, reads the versions the live system has loaded and patches an existing installation in place. It cannot be run unattended, so Amiga File Forge checks what it can and then hands you the machine.</li>
+                <li>Choose <strong>Tools &rarr; Install AmigaOS 3.5 or 3.9</strong> with a partition open, then point it at the ISO of the disc you own. Nothing is downloaded.</li>
+                <li>The disc is identified by the volume name Commodore wrote, then confirmed by its own drawer, so a contribution CD is not mistaken for a release.</li>
+                <li>Both need a 68020 or better. An A1200, A3000, A4000 or CD32 qualifies on its own, as does any machine with a 68020 to 68060 accelerator or a PiStorm. A stock A500 or A600 is told so rather than left to find out from a machine that will not start.</li>
+                <li>Both update a system rather than creating one, so a volume with no <code>S:Startup-Sequence</code> has nothing to update. Install Workbench 3.1 onto it first.</li>
+                <li>Every blocking reason is shown at once. When they are clear, <strong>Boot with the CD</strong> starts the machine with the drive booting and the disc in the CD drive; open the disc and run its installation icon.</li>
                 <li>Disks are recognised by the volume name inside each image, not by its file name, so a folder of inconsistently named dumps is read correctly and anything that is not part of a release is ignored.</li>
                 <li>The release is decided from the Workbench disk and every other disk is matched to it. Mixing releases produces a system whose parts disagree with each other, so a disk from another release is left out rather than installed.</li>
                 <li>Workbench and Extras merge into the root; Fonts, Locale, Storage, Classes, Backdrops and Install become drawers of their own. Workbench is copied first, so its full <code>C:</code>, <code>L:</code> and <code>Libs:</code> are not replaced by the cut-down copies the other disks carry.</li>

@@ -883,6 +883,7 @@ function renderPane(index, preserveScroll = false) {
       ${isFfsHdd ? '<button class="menu-command audit-ffs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
       ${acceptsInstall ? `<span class="menu-separator" role="separator"></span>
         <button class="menu-command install-workbench"><b>⌘</b><span>Install Workbench…</span></button>
+        <button class="menu-command install-amigaos-cd"><b>◎</b><span>Install AmigaOS 3.5 or 3.9…</span></button>
         <button class="menu-command staged-installations"><b>▤</b><span>Staged installations…</span></button>`
         : '<button class="menu-command staged-installations"><b>▤</b><span>Staged installations…</span></button>'}
       ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isKickfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-kickfs"><b>▥</b><span>Kickstart ROM properties…</span></button>'}` : isPartitionIndex || isDMS ? (isDMS ? '<button class="menu-command dms-project"><b>≋</b><span>DMS archive project…</span></button><button class="menu-command convert-dms"><b>⇥</b><span>Convert archive to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
@@ -972,6 +973,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".audit-ffs-installations")?.addEventListener("click", () => guardedPaneAction(index, () => showFfsInstallationAudit(index)));
   host.querySelector(".staged-installations")?.addEventListener("click", () => guardedPaneAction(index, () => showStagedInstallations(index)));
   host.querySelector(".install-workbench")?.addEventListener("click", () => guardedPaneAction(index, () => showWorkbenchInstall(index)));
+  host.querySelector(".install-amigaos-cd")?.addEventListener("click", () => guardedPaneAction(index, () => showAmigaosCdInstall(index)));
   host.querySelector(".open-hex-editor")?.addEventListener("click", () => guardedPaneAction(index, () => openHexEditor(index)));
   host.querySelector(".run-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, false)));
   host.querySelector(".debug-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, true)));
@@ -3841,6 +3843,117 @@ function paneHoldsVolume(pane) {
   if (!pane?.image || pane.archivePath || pane.image.readOnly) return false;
   if (pane.image.kind === "hdf") return pane.partition !== null;
   return pane.image.kind === "ffs";
+}
+
+
+//: Installing AmigaOS 3.5 or 3.9, which were published on CD and are not
+//: installed the way 3.1 is.
+//:
+//: There is no tree to copy. The disc carries a Commodore Installer script
+//: that runs on the Amiga, reads the versions the live system has loaded,
+//: asks a great many questions and patches an existing installation in place.
+//: So this checks everything that can be checked from here, then boots the
+//: machine with the disc in the CD drive and hands over the keyboard.
+async function showAmigaosCdInstall(index) {
+  const pane = panes[index];
+  if (!paneAcceptsInstall(pane)) {
+    return alertNotice(
+      "Install AmigaOS 3.5 or 3.9",
+      "These releases update a system on a hard drive, so open a partition on one first.",
+      { confirmLabel: "Close" },
+    );
+  }
+  const releases = await api("/api/install/amigaos-cd/releases").catch(() => ({ releases: [] }));
+  let disc = null;
+
+  const closed = showModal(`
+    <h2>Install AmigaOS 3.5 or 3.9</h2>
+    <p>Prepares ${esc(volumeLabel(pane) || pane.image.name)} to be updated, then boots it with the release CD in the drive.</p>
+    <div class="help-note"><strong>The installer is Commodore's.</strong> These releases are installed by a script on the disc that reads the running system and asks where things should go. It cannot be run unattended, so this checks what it can and then hands you the machine with everything in place.</div>
+    <div class="field"><label>Release CD</label>
+      <button type="button" class="button" data-choose-cd>Choose a CD image…</button>
+      <small>The ISO of the AmigaOS ${esc((releases.releases || []).map(r => r.key).join(" or ") || "3.5 or 3.9")} disc you own. Nothing is downloaded.</small></div>
+    <div class="file-selection-summary" data-cd-summary>
+      <span class="file-selection-empty">No CD chosen yet.</span>
+    </div>
+    <div data-cd-preflight hidden></div>
+    <div class="modal-actions">
+      <button class="button ghost" value="cancel">Cancel</button>
+      <button class="button primary" value="boot" data-boot-cd disabled>Boot with the CD</button>
+    </div>`,
+  async () => {
+    if (!disc) throw new Error("Choose the release CD first.");
+    const result = await trackedPaneOperation(index, "Starting the emulator…", () =>
+      api(`/api/images/${pane.image.id}/install/amigaos-cd`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disc: disc.id, partition: pane.partition }),
+      }));
+    toast(result.result.summary);
+    return true;
+  });
+
+  const summary = modalContent.querySelector("[data-cd-summary]");
+  const preflight = modalContent.querySelector("[data-cd-preflight]");
+  const boot = modalContent.querySelector("[data-boot-cd]");
+
+  //: The disc is opened as an ordinary image session, so it is read by the
+  //: same CD reader a pane uses, and released when the dialog closes.
+  const release = async () => {
+    if (!disc) return;
+    const previous = disc;
+    disc = null;
+    await api(`/api/images/${previous.id}`, { method: "DELETE" }).catch(() => {});
+  };
+  modal.addEventListener("close", () => { release(); }, { once: true });
+
+  modalContent.querySelector("[data-choose-cd]").onclick = async () => {
+    const files = await pickHostFiles({ accept: ".iso,.cdr" });
+    if (!files.length) return;
+    await release();
+    summary.className = "file-selection-summary has-files";
+    summary.innerHTML = `<span>Reading ${esc(files[0].name)}…</span>`;
+    boot.disabled = true;
+    preflight.hidden = true;
+    try {
+      const upload = new FormData();
+      upload.append("image", files[0]);
+      upload.append("targetHardware", "auto");
+      disc = (await uploadApi("/api/images", upload)).image;
+      const checked = (await api(`/api/images/${pane.image.id}/install/amigaos-cd/preflight`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disc: disc.id, partition: pane.partition }),
+      })).preflight;
+      renderAmigaosCdPreflight(summary, preflight, boot, checked, files[0].name);
+    } catch (error) {
+      summary.className = "file-selection-summary chooser-failed";
+      summary.innerHTML = `<span>${esc(error.message)}</span>`;
+    }
+  };
+
+  return closed;
+}
+
+//: What the preflight found, said plainly. Every blocking reason is shown
+//: rather than only the first, because an operator fixing one at a time and
+//: rerunning is exactly the slow loop the check exists to avoid.
+function renderAmigaosCdPreflight(summary, host, boot, checked, filename) {
+  const found = checked.disc || {};
+  summary.className = `file-selection-summary ${found.recognised ? "has-files" : "chooser-failed"}`;
+  summary.innerHTML = found.recognised
+    ? `<span><strong>${esc(found.label)}</strong> recognised from the volume name <code>${esc(found.volume)}</code>.</span>`
+    : `<span>${esc(found.reason || `${filename} was not recognised.`)}</span>`;
+
+  host.hidden = false;
+  host.innerHTML = `
+    ${checked.blocking.length ? `<div class="help-warning"><strong>Not ready yet:</strong><ul>${
+      checked.blocking.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
+    ${checked.warnings.length ? `<div class="help-note"><strong>Worth knowing:</strong><ul>${
+      checked.warnings.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
+    ${found.recognised && found.requires ? `<div class="help-note"><strong>${esc(found.label)} needs:</strong> ${esc(found.requires)}</div>` : ""}
+    ${checked.ready ? `<div class="help-note">Everything this can check is in order. Booting will start the machine with the CD in the drive; open the disc on the Workbench and run its installation icon.</div>` : ""}`;
+  boot.disabled = !checked.ready;
 }
 
 //: A pane can receive an install only when it is a volume on a hard drive.

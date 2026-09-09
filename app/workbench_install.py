@@ -411,6 +411,61 @@ class WorkbenchInstallMixin:
             created.append(drawer)
         return created
 
+    def amigaos_cd_preflight(self, target: ImageSession, disc: ImageSession) -> dict:
+        """Whether this drive, this hardware and this disc can install together.
+
+        Every part of this is checked before an emulator is started, because
+        the alternative is an operator watching a machine boot for a minute to
+        be told something that was knowable from the outset. Nothing here
+        writes to anything.
+        """
+        from . import volume_copy
+        from .amigaos_cd import processor_ready
+        from .emulator_config import profile_addons, profile_machine
+
+        found = self.amigaos_release_on(disc)
+        blocking: list[str] = []
+        warnings: list[str] = []
+        if not found.get("recognised"):
+            blocking.append(found.get("reason", "That disc is not an AmigaOS release CD."))
+
+        ready, reason = processor_ready(profile_machine(target), profile_addons(target))
+        if not ready:
+            blocking.append(reason)
+
+        summary = self.summary(target)
+        if not summary.get("hardDisk") and target.kind != "hdf":
+            blocking.append(
+                "AmigaOS 3.5 and 3.9 install onto a hard drive. Open a partition on one."
+            )
+        elif target.kind == "hdf" and target.partition is None:
+            blocking.append("Choose a partition on this hard drive first.")
+        else:
+            # Both releases update an existing system rather than creating
+            # one, and 3.9 refuses outright when it finds nothing to update.
+            if not volume_copy.entry_exists(self, target, STARTUP_SEQUENCE):
+                blocking.append(
+                    "This volume has no S:Startup-Sequence, so there is no AmigaOS on it "
+                    "to update. Install Workbench 3.1 onto it first."
+                )
+            free = summary.get("capacity", {}) if isinstance(summary.get("capacity"), dict) else {}
+            needed = int(found.get("diskSpaceMb") or 0) * 1024 * 1024
+            available = int(free.get("free") or 0)
+            if needed and available and available < needed:
+                warnings.append(
+                    f"{found.get('label', 'The release')} needs about "
+                    f"{found['diskSpaceMb']} MB and this volume has less free than that."
+                )
+
+        return {
+            "ready": not blocking,
+            "disc": found,
+            "machine": profile_machine(target),
+            "processorReady": ready,
+            "blocking": blocking,
+            "warnings": warnings,
+        }
+
     def _workbench_readiness(self, target: ImageSession) -> list[str]:
         """Reasons this volume still will not boot, said plainly.
 

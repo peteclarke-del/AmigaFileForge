@@ -88,6 +88,47 @@ A hard drive boots from the flag in its Rigid Disk Block rather than from a
 floppy boot block, so if the partition is not marked bootable the install says
 so rather than leaving you with a drive that silently will not start.
 
+## AmigaOS 3.5 and 3.9, which came on CD
+
+These two releases are not installed the way 3.1 is, and it is worth being
+plain about why. There is no tree to copy. The disc carries a Commodore
+Installer script of two hundred kilobytes that runs on the Amiga, reads the
+versions of the libraries the live system has loaded, asks a great many
+questions and patches an existing installation in place. Its own words are
+that "Pretend mode cannot be used with this installation script", and 3.9
+refuses outright unless it finds an earlier release to update.
+
+So Amiga File Forge does not install them. What it does is everything up to
+that point, which is the part that otherwise costs an afternoon to discover.
+
+Choose **Tools -> Install AmigaOS 3.5 or 3.9** with a partition open, then
+point it at the ISO of the disc you own. Nothing is downloaded, and no AmigaOS
+is shipped.
+
+Three things are checked before anything starts:
+
+- **The disc.** It is identified by the volume name Commodore wrote,
+  `AmigaOS3.5` or `AmigaOS3.9`, and then confirmed by looking for that
+  release's own drawer. A contribution CD or an OS4 disc is not accepted on a
+  similar name alone.
+- **The processor.** Both releases need a 68020 or better. An A1200, A3000,
+  A4000 or CD32 qualifies on its own, and so does any machine carrying a
+  68020, 68030, 68040 or 68060 accelerator, or a PiStorm. A stock A500 or A600
+  cannot run either release, and is told so rather than left to find out from
+  a machine that will not start.
+- **The drive.** Both releases update a system rather than creating one, so a
+  volume with no `S:Startup-Sequence` has nothing for them to update. Install
+  Workbench 3.1 onto it first, which this application can do.
+
+Every blocking reason is reported at once rather than one at a time, because
+fixing one and running again is exactly the slow loop the check exists to
+avoid.
+
+When all three are in order, **Boot with the CD** starts the machine with the
+drive booting and the disc in the CD drive, which is the state the installer
+expects. Open the disc on the Workbench and run its installation icon; it will
+ask where to install and what to include.
+
 ## Method 1: stage it for installing later
 
 This is the default, and for a multi-disc set it is usually the right answer.
