@@ -129,6 +129,31 @@ drive booting and the disc in the CD drive, which is the state the installer
 expects. Open the disc on the Workbench and run its installation icon; it will
 ask where to install and what to include.
 
+### Making the disc visible
+
+A stock Workbench 3.1 installation has everything needed to read a CD and none
+of it switched on, which is worth knowing because the symptom is a machine that
+boots perfectly and shows no disc at all.
+
+The Extras disk puts the CD filing system in `L:`, and the Storage disk puts
+the `CD0` mountlist in `Storage/DOSDrivers`, which is the drawer Workbench keeps
+things in until they are wanted. AmigaDOS reads only `Devs/DOSDrivers`, so the
+driver is present and inactive.
+
+Booting with a CD activates it. The mountlist is copied into
+`Devs/DOSDrivers/CD0`, and because Commodore leaves its `Device` and `Unit`
+lines commented out and takes them from tooltypes on the `CD0` icon, defaulting
+to a real SCSI drive at unit 2, those two lines are written into the mountlist
+itself. That is the form the file's own comment documents.
+
+This writes to the image, so it takes an undo checkpoint like any other write,
+and it is reported before it happens rather than done silently.
+
+The device it points at, `uaescsi.device` unit 0, is what FS-UAE presents a CD
+on for a machine that has no CD drive of its own. If a disc still does not
+appear, that value is the thing to check: it lives in
+`Devs/DOSDrivers/CD0` on the drive and can be edited there.
+
 ## Method 1: stage it for installing later
 
 This is the default, and for a multi-disc set it is usually the right answer.
