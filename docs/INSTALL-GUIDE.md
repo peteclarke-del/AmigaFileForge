@@ -30,7 +30,12 @@ folder holding your Workbench floppy images, or pick the images yourself.
 
 No AmigaOS is shipped with Amiga File Forge and none is downloaded. It is not
 free to redistribute, so the disks have to be the ones you own. ADF, ADZ, DMS
-and HFE images are all read.
+and HFE images are all read, including the zipped-per-disk form a TOSEC
+collection uses.
+
+Pointing at a whole collection folder is fine. A TOSEC `Workbench` folder holds
+every release together, and everything in it that is not part of one is listed
+as ignored. The disks you did not choose are simply not installed.
 
 **Disks are recognised by the volume name inside each image, not by its file
 name.** ADF collections are named inconsistently - `wb31_workbench.adf`,

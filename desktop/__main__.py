@@ -20,6 +20,12 @@ from .runtime import DesktopServer
 
 NATIVE_OPEN_EXTENSIONS = IMAGE_EXTENSIONS | {".geo", ".zip"}
 MAX_NATIVE_OPEN_PLANS = 256
+#: How many files a chosen folder may hand back to the page. A collection
+#: folder can hold tens of thousands, and every one of them becomes a File the
+#: page has to consider, so the selection is bounded rather than allowed to
+#: grow until the browser process is in trouble. It is well above a complete
+#: AmigaOS release and above a TOSEC Workbench folder.
+FOLDER_SELECTION_LIMIT = 2000
 
 
 def _desktop_message_text(result) -> str:
@@ -39,6 +45,24 @@ def _desktop_message_text(result) -> str:
     if not isinstance(message, str):
         raise TypeError("WebKit supplied a non-text script message.")
     return message
+
+
+def _folder_selection(root: Path, limit: int = FOLDER_SELECTION_LIMIT) -> list[str]:
+    """Every ordinary file below ``root``, in a stable order and bounded.
+
+    This is what a chosen folder hands back to the page, standing in for the
+    directory input a browser would have filled in. Symbolic links are left
+    out because a collection folder that links to itself, or to the root of a
+    drive, would otherwise be walked until something gave way.
+    """
+    files: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if len(files) >= limit:
+            break
+        if path.is_symlink() or not path.is_file():
+            continue
+        files.append(str(path))
+    return files
 
 
 def _arguments(argv: list[str]) -> argparse.Namespace:
@@ -166,6 +190,14 @@ def run(argv: list[str] | None = None) -> int:
             # the desktop portal still owns the visible chooser.
             self.chooser_targets = {}
             self.native_drop_target = None
+            # Set by the page immediately before it opens a directory input.
+            # WebKitGTK's file chooser API has no concept of a directory: its
+            # whole selection surface is select_multiple, mime types and
+            # select_files, so "webkitdirectory" is ignored and the operator
+            # gets an ordinary file chooser they cannot pick a folder in. The
+            # page therefore says what it wants first, and the request is
+            # answered with a real folder chooser below.
+            self.expecting_folder = False
 
         def do_startup(self) -> None:
             Adw.Application.do_startup(self)
@@ -228,6 +260,7 @@ def run(argv: list[str] | None = None) -> int:
                 )
                 self.webview.connect("load-changed", self._loaded)
                 self.webview.connect("decide-policy", self._navigation_policy)
+                self.webview.connect("run-file-chooser", self._page_file_chooser)
                 self.native_drop_target = Gtk.DropTarget.new(
                     Gdk.FileList,
                     Gdk.DragAction.COPY,
@@ -257,6 +290,9 @@ def run(argv: list[str] | None = None) -> int:
                     str(exc),
                 )
                 return
+            if message == "expect-folder":
+                self.expecting_folder = True
+                return
             if message == "open-images" or message.startswith("open-images:"):
                 _command, separator, pane_value = message.partition(":")
                 try:
@@ -273,6 +309,61 @@ def run(argv: list[str] | None = None) -> int:
                     self._start_open_worker()
             except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 GLib.idle_add(self._deliver_error, "the selected image", str(exc))
+
+        def _page_file_chooser(self, _view, request) -> bool:
+            """Answer a file input the page opened, with a folder when asked.
+
+            Returning False leaves WebKit's own chooser in place, which is the
+            right answer for an ordinary file input. A directory input is the
+            case WebKitGTK cannot serve at all, so it is served here: the
+            operator picks a folder and every file inside it is handed back,
+            which is what the page would have received from a browser.
+            """
+            if not self.expecting_folder:
+                return False
+            self.expecting_folder = False
+            chooser = Gtk.FileChooserNative.new(
+                "Choose a folder",
+                self.window,
+                Gtk.FileChooserAction.SELECT_FOLDER,
+                "_Open",
+                "_Cancel",
+            )
+            self.chooser_targets[chooser] = request
+            chooser.connect("response", self._folder_chosen)
+            chooser.show()
+            return True
+
+        def _folder_chosen(self, chooser, response) -> None:
+            request = self.chooser_targets.pop(chooser, None)
+            try:
+                if request is None:
+                    return
+                if response != Gtk.ResponseType.ACCEPT:
+                    request.cancel()
+                    return
+                folder = chooser.get_file()
+                root = Path(folder.get_path()) if folder and folder.get_path() else None
+                if root is None:
+                    request.cancel()
+                    return
+                # The page filters this down to the images it wants, exactly
+                # as it does with a browser's directory input.
+                files = _folder_selection(root)
+                if not files:
+                    request.cancel()
+                    return
+                request.select_files(files)
+            except Exception as exc:
+                if request is not None:
+                    request.cancel()
+                GLib.idle_add(
+                    self._deliver_error,
+                    "the chosen folder",
+                    str(exc) or type(exc).__name__,
+                )
+            finally:
+                chooser.destroy()
 
         def _navigation_policy(self, _view, decision, decision_type) -> bool:
             if decision_type not in (
