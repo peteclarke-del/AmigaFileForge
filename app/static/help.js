@@ -703,7 +703,7 @@ function showHelp() {
               <h4>Install Workbench onto a drive</h4>
               <ol>
                 <li>A blank drive is not a machine you can use. Choose <strong>Tools &rarr; Install Workbench</strong> with a partition open, and point at the folder holding your own Workbench floppy images.</li>
-                <li>Amiga File Forge does not ship AmigaOS and cannot fetch it. Use the ADF, ADZ, DMS or HFE images of the disks you own.</li>
+                <li>Amiga File Forge does not ship AmigaOS and cannot fetch it. Use the ADF, ADZ, DMS or HFE images of the disks you own, including the zipped-per-disk form a TOSEC collection uses.</li>
                 <li>Disks are recognised by the volume name inside each image, not by its file name, so a folder of inconsistently named dumps is read correctly and anything that is not part of a release is ignored.</li>
                 <li>The release is decided from the Workbench disk and every other disk is matched to it. Mixing releases produces a system whose parts disagree with each other, so a disk from another release is left out rather than installed.</li>
                 <li>Workbench and Extras merge into the root; Fonts, Locale, Storage, Classes, Backdrops and Install become drawers of their own. Workbench is copied first, so its full <code>C:</code>, <code>L:</code> and <code>Libs:</code> are not replaced by the cut-down copies the other disks carry.</li>
