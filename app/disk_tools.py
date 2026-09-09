@@ -9,6 +9,18 @@ from .errors import DiskError
 
 
 def friendly_engine_error(message: str) -> str:
+    # A disc can carry an Amiga boot block and no AmigaDOS filing system at
+    # all. Amiga UNIX ships exactly that: the boot block chain-loads the UNIX
+    # bootstrap and the rest of the disc is a UNIX filesystem, so there is no
+    # root block to find. Calling such a disc damaged is wrong, and it sends
+    # somebody looking for a fault in a perfectly good dump.
+    if "boot block" in message and "no readable root block" in message:
+        return (
+            "This disc has an Amiga boot block but no AmigaDOS filing system. "
+            "It is either unformatted or damaged, or it is a disc that boots "
+            "an operating system of its own, such as an Amiga UNIX bootstrap. "
+            "Its bytes can still be inspected in the hex editor."
+        )
     if "outside this volume" in message and "Block" in message:
         return (
             "The hard-drive image geometry is incomplete or invalid. "
