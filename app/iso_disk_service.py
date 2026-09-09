@@ -112,6 +112,56 @@ class IsoDiskMixin:
             "datestamp": entry.datestamp,
         }
 
+    def amigaos_release_on(self, session: ImageSession) -> dict:
+        """Whether this disc is an AmigaOS release, and what it would need.
+
+        Identified by the volume name Commodore wrote, then confirmed by
+        looking for that release's own payload drawer. A contribution CD or a
+        coverdisk carrying a similar name is not accepted on the name alone,
+        because launching an emulator against the wrong disc wastes an
+        operator's afternoon rather than failing quickly.
+        """
+        from .amigaos_cd import release_for_volume
+
+        if session.kind != "iso":
+            return {"recognised": False, "reason": "This is not a CD image."}
+        with self.iso_image(session) as image:
+            volume = image.volume
+            release = release_for_volume(volume)
+            payload_present = False
+            if release is not None:
+                payload_present = any(
+                    entry.directory and entry.name.casefold() == release.payload.casefold()
+                    for entry in image.list_directory()
+                )
+        if release is None:
+            return {
+                "recognised": False,
+                "volume": volume,
+                "reason": (
+                    f"{volume or session.name} is not an AmigaOS release CD. "
+                    "The 3.5 and 3.9 discs name themselves AmigaOS3.5 and AmigaOS3.9."
+                ),
+            }
+        if not payload_present:
+            return {
+                "recognised": False,
+                "volume": volume,
+                "reason": (
+                    f"{volume} names itself {release.label} but carries no "
+                    f"{release.payload} drawer, so it is not the installation disc."
+                ),
+            }
+        return {
+            "recognised": True,
+            "volume": volume,
+            "release": release.key,
+            "label": release.label,
+            "payload": release.payload,
+            "requires": release.requires,
+            "diskSpaceMb": release.disk_space_mb,
+        }
+
     def iso_summary(self, session: ImageSession) -> dict:
         """What the disc calls itself, for the pane heading."""
         try:

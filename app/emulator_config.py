@@ -110,6 +110,10 @@ DRIVE_SUFFIXES = {".hdf", ".hda", ".hdz", ".img", ".raw", ".rdsk"}
 #: DF0: to DF3:. The hardware has four, and FS-UAE exposes exactly those.
 MAXIMUM_FLOPPY_DRIVES = 4
 
+#: FS-UAE attaches one CD drive, which is what a real machine with a CD-ROM
+#: had and all an AmigaOS release install needs.
+MAXIMUM_CD_DRIVES = 1
+
 
 def kickstart_for(machine: str) -> Path | None:
     """Return the user-supplied Kickstart this machine would boot from."""
@@ -200,6 +204,7 @@ def emulator_command(
     interactive: bool = False,
     native: bool = False,
     floppies: list[str | Path] | None = None,
+    cdroms: list[str | Path] | None = None,
 ) -> tuple[list[str], str]:
     """Build the command line that boots one image, optionally with discs.
 
@@ -208,6 +213,11 @@ def emulator_command(
     every Amiga installer expects to find. A multi-disc set fills DF1: and
     upwards so a disc swap is a menu choice rather than a restart, up to the
     four drives the hardware has.
+
+    ``cdroms`` is the same idea for the releases published on CD. AmigaOS 3.5
+    and 3.9 are installed by a script on the disc, which the machine reaches
+    through a CD drive rather than a floppy drive, so the image is attached as
+    one instead of being counted against the four floppy drives.
     """
     emulator = configured_emulator(session)
     if not emulator.available:
@@ -256,6 +266,14 @@ def emulator_command(
         for index, disc in enumerate(attached):
             arguments.append(f"--floppy_drive_{index}={disc}")
             arguments.append(f"--floppy_image_{index}={disc}")
+        compact_discs = [Path(item) for item in (cdroms or [])]
+        if len(compact_discs) > MAXIMUM_CD_DRIVES:
+            raise ValueError(
+                f"FS-UAE attaches {MAXIMUM_CD_DRIVES} CD drive; "
+                f"{len(compact_discs)} discs were attached."
+            )
+        for index, disc in enumerate(compact_discs):
+            arguments.append(f"--cdrom_drive_{index}={disc}")
         if boot in {"auto", "boot"}:
             arguments.append("--automatic_input_grab=0")
         if debug:
@@ -326,6 +344,7 @@ def _fsuae_model(machine: str, addons: set[str]) -> str:
 __all__ = [
     "ALL_MACHINES",
     "DRIVE_SUFFIXES",
+    "MAXIMUM_CD_DRIVES",
     "EMULATORS",
     "FLOPPY_SUFFIXES",
     "FSUAE_MODELS",

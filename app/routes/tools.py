@@ -166,13 +166,21 @@ class InteractiveEmulator:
         with self.lock:
             self._stop_locked()
 
-    def start(self, media_context, *, debug: bool, floppies: list | None = None):
+    def start(
+        self,
+        media_context,
+        *,
+        debug: bool,
+        floppies: list | None = None,
+        cdroms: list | None = None,
+    ):
         """Run one emulator session, optionally with discs already inserted.
 
         ``floppies`` is what makes installing a title possible: the machine
         boots the hard drive with the disc in DF0:, which is the state every
         Amiga installer expects and cannot be reached by handing it the disc
-        alone.
+        alone. ``cdroms`` does the same for the AmigaOS releases published on
+        CD, which are reached through a CD drive rather than a floppy drive.
         """
         with self.lock:
             self._stop_locked()
@@ -185,6 +193,7 @@ class InteractiveEmulator:
                     interactive=True,
                     native=self.native,
                     floppies=floppies,
+                    cdroms=cdroms,
                 )
                 if not self.native:
                     self.xvfb = subprocess.Popen(
@@ -1174,6 +1183,64 @@ def create_tools_blueprint(
                 f"{emulator.label} is running with {len(discs)} disc"
                 f"{'' if len(discs) == 1 else 's'} inserted. "
                 "Run the title's installer from the Workbench and point it at this drive."
+            ),
+            "displayMode": "native" if runtime.kind == "desktop" else "browser",
+            **({} if runtime.kind == "desktop" else {"viewerPort": 8668}),
+        })
+
+    @blueprint.post("/api/images/<image_id>/install/amigaos-cd")
+    @request_effect("external", "booting a drive with an AmigaOS release CD attached")
+    def install_amigaos_cd(image_id):
+        """Boot this drive with the AmigaOS release CD in the CD drive.
+
+        The installation is Commodore's work, not this application's. AmigaOS
+        3.5 and 3.9 are installed by a script on the disc that reads the
+        versions the live system has loaded, asks a great many questions and
+        patches an existing installation in place. It says of itself that
+        pretend mode cannot be used with it, so there is no unattended path
+        and pretending otherwise would produce a drive that does not boot.
+
+        What can be done from here is everything up to that point: check the
+        disc, the processor and the drive, then put the machine in the state
+        the script needs and hand over the keyboard.
+        """
+        session = service.get(image_id)
+        data = payload()
+        apply_partition(service, session, data.get("partition"))
+        disc = service.get(str(data["disc"]))
+        checked = service.amigaos_cd_preflight(session, disc)
+        if not checked["ready"]:
+            raise DiskError(checked["blocking"][0])
+        configured = requested_emulator_session(session, data)
+        launch = copy(configured)
+        launch.hardware_profile = dict(configured.hardware_profile or {})
+        # The installer is reached from the Workbench already on the drive, so
+        # the machine boots the drive and finds the disc waiting in the CD
+        # drive, exactly as it would with the CD in a real machine.
+        launch.hardware_profile["emulatorBoot"] = "boot"
+        try:
+            arguments, started = interactive_emulator.start(
+                whole_drive_media(session, launch),
+                debug=False,
+                cdroms=[disc.path],
+            )
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            raise DiskError(f"The emulator could not start: {exc}") from exc
+        emulator = configured_emulator(started)
+        release = checked["disc"]
+        return jsonify(result={
+            "time": datetime.now(timezone.utc).isoformat(),
+            "command": arguments[0],
+            "interactive": True,
+            "emulator": emulator.label,
+            "machine": str(started.hardware_profile.get("machine") or ""),
+            "release": release.get("label", ""),
+            "disc": disc.name,
+            "warnings": checked.get("warnings", []),
+            "summary": (
+                f"{emulator.label} is running with {release.get('label', 'the disc')} "
+                f"in the CD drive. Open the disc on the Workbench and run its "
+                f"installation icon; it will ask where to install and what to include."
             ),
             "displayMode": "native" if runtime.kind == "desktop" else "browser",
             **({} if runtime.kind == "desktop" else {"viewerPort": 8668}),

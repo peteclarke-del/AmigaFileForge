@@ -24,6 +24,7 @@ from ..install_service import (
     DEFAULT_WHDLOAD_PARENT,
 )
 from ..lha import is_lha_bytes
+from ..amigaos_cd import REQUIRED_PROCESSOR, describe_releases
 from ..workbench_install import describe_roles
 from ..operations import OperationRegistry
 from .common import apply_partition, payload
@@ -185,6 +186,30 @@ def create_install_blueprint(service: DiskService, operations: OperationRegistry
                 progress=progress,
             )
         return jsonify(image=service.summary(session), workbench=result)
+
+    # ------------------------------------------------------------------
+    # AmigaOS 3.5 and 3.9, published on CD
+    # ------------------------------------------------------------------
+
+    @blueprint.get("/api/install/amigaos-cd/releases")
+    def amigaos_cd_releases():
+        """The CD releases this recognises, and what each one needs."""
+        return jsonify(releases=describe_releases(), processor=REQUIRED_PROCESSOR)
+
+    @blueprint.post("/api/images/<image_id>/install/amigaos-cd/preflight")
+    @request_effect("read-only", "checking whether a drive can take an AmigaOS CD")
+    def amigaos_cd_preflight(image_id):
+        """Say whether this drive, this hardware and this disc can work.
+
+        Checked before anything is launched, because every one of these is
+        knowable from the outset and the alternative is an operator watching a
+        machine boot in order to be told. Nothing here writes to anything.
+        """
+        data = payload()
+        session = service.get(image_id)
+        apply_partition(service, session, data.get("partition"))
+        disc = service.get(str(data["disc"]))
+        return jsonify(preflight=service.amigaos_cd_preflight(session, disc))
 
     # ------------------------------------------------------------------
     # WHDLoad
