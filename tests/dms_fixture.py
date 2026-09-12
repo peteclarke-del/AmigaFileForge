@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 
-from app.dms import HEADER_SIZE, MAGIC, TRACK_SIZE, crc16
+from app.dms import HEADER_SIZE, MAGIC, TRACK_SIZE, crc16, simple_sum
 
 
 def dms_track(number: int, data: bytes, *, mode: int = 0, flags: int = 0) -> bytes:
@@ -20,8 +20,8 @@ def dms_track(number: int, data: bytes, *, mode: int = 0, flags: int = 0) -> byt
         len(data),
         flags,
         mode,
-        crc16(data),
-        crc16(data),
+        simple_sum(data),  # unpacked data: a 16-bit sum, as xDMS checks it
+        crc16(data),  # packed data: a CRC-16
     )
     struct.pack_into(">H", header, 18, crc16(bytes(header[:18])))
     return bytes(header) + data

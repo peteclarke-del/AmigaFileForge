@@ -186,7 +186,9 @@ These are stated here rather than discovered later:
   the only edit an archive's own size fields can survive. Reading is complete:
   `NOCOMP`, `SIMPLE`, `QUICK`, `MEDIUM`, `DEEP`, `HEAVY1` and `HEAVY2` are all
   decoded in-tree, along with the run-length pass every mode may apply, and the
-  decoders are pinned byte-for-byte to the public-domain xDMS 1.3 reference.
+  decoders and track checksums are pinned byte-for-byte to the public-domain
+  xDMS 1.3 reference. Banner and FILE_ID.DIZ pseudo-tracks are not written to
+  the rebuilt ADF, and high-density archives rebuild at 22 sectors a track.
 - **Long-filename and third-party filing systems.** `DOS\6`, `DOS\7`, `PFS\3`,
   `SFS\0` and `SFS\2` are identified and reported, but opened read-only.
 - **AmigaOS disks.** No Workbench, Extras, Fonts or Locale disk is shipped or
@@ -697,7 +699,7 @@ contents instead of trusting the filename:
 - readable Latin-1 files open in the text editor;
 - binary files open in an annotated disassembly viewer;
 - DMS archives, including gzip-compressed or extensionless DMS files, list
-  every track with its compression mode and both CRCs. An uncompressed track
+  every track with its compression mode and both checksums. An uncompressed track
   allows a same-length edit after a structural preservation review;
 - ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2, TAR.XZ, standalone GZIP, BZIP2 and XZ files
   appear as archives and open as bounded folder hierarchies in the same pane.
@@ -1410,7 +1412,7 @@ unrecognised filing system is rejected with that distinction made clear.
 | Partitioned hard drive | HDF, HDZ, RDSK | Read the Rigid Disk Block, list every partition with its device name, DOS type, boot flag and priority, and open each one as an ordinary volume |
 | RDB-less hardfile | HDA with a GEO sidecar | Browse and edit a bare volume whose geometry comes from its sidecar, and keep the two in step on save |
 | Raw drive dump | IMG, RAW, BIN, extensionless images | Identify the filing system from its contents, then open it as OFS, FFS or a partitioned drive |
-| DiskMasher archive | DMS | List every track with its compression mode and both CRCs, decode every compression mode DiskMasher defines, and rebuild the disk as an ADF |
+| DiskMasher archive | DMS | List every track with its compression mode and both checksums, decode every compression mode DiskMasher defines, and rebuild the disk as an ADF |
 | HxC floppy container | HFE v1, v2 and v3 | Decode OFS or FFS sectors for browsing and extraction; safely edit ordinary HFE v1 disks and save them back with their original track layout |
 | SuperCard Pro flux capture | SCP | Decode OFS or FFS sectors for browsing and extraction; edit captures that HxCFE can re-encode byte-for-byte, otherwise browse and copy read-only |
 | SPS preservation capture | IPF | Decode the ordinary AmigaDOS sectors into a working ADF when the SPS decoder library is installed, reporting every sector the capture holds in a form an ADF cannot |
@@ -2174,7 +2176,8 @@ converting one is a real operation rather than a rename.
 - The archive header is decoded in full: creator version, required version,
   disk type, low and high track, packed and unpacked sizes.
 - Every track is listed with its number, compression mode, packed and unpacked
-  lengths, and both of its CRCs. A truncated download is detected here rather
+  lengths, the CRC-16 of its stored data and the 16-bit sum of its unpacked
+  data, which xDMS checks the same way. A truncated download is detected here rather
   than producing a disk full of zeros.
 - **Tools → DMS project** inventories the header and every track with offsets,
   lengths and a SHA-256 fingerprint of the whole archive.
@@ -2516,7 +2519,7 @@ Backend routes are split by responsibility:
 - `app/rom_disk_service.py` owns raw ROM bank inspection, layout, movement,
   replacement, physical-component export and persistent ROM projects.
 - `app/dms.py` parses DiskMasher archives: the archive header, every track
-  header, both CRCs per track, and the rebuild back to an ADF.
+  header, both checksums per track, and the rebuild back to an ADF.
 - `app/dms_disk_service.py` owns cached DMS access and DMS-to-ADF conversion.
 - `app/dms_codec.py` decodes every DiskMasher compression mode in-tree, ported
   from the public-domain xDMS 1.3 reference and pinned to its exact output.
