@@ -16,7 +16,7 @@ from app.archive_browser import (
     replace_archive_member,
 )
 from tests.dms_fixture import minimal_dms
-from app.dms import TRACK_SIZE
+from app.dms import TRACK_SIZE, crc16, simple_sum
 from app.dms import dms_project
 
 try:
@@ -176,7 +176,10 @@ class ArchiveBrowserTests(unittest.TestCase):
             self.assertEqual(first["length"], TRACK_SIZE)
             # A track has checksums rather than an AmigaDOS load address.
             self.assertNotIn("load", first)
-            self.assertEqual(first["packedChecksum"], first["unpackedChecksum"])
+            # The stored data carries a CRC-16 and the unpacked data a 16-bit
+            # sum, as in a DiskMasher archive, even when the two are the same bytes.
+            self.assertEqual(first["packedChecksum"], crc16(b"A" * TRACK_SIZE))
+            self.assertEqual(first["unpackedChecksum"], simple_sum(b"A" * TRACK_SIZE))
             self.assertEqual(
                 read_archive_member(data, "game.dms", "Track 000"), b"A" * TRACK_SIZE
             )

@@ -573,7 +573,7 @@ function showHelp() {
             <div class="help-task">
               <h4>Convert a DMS archive back to a disk</h4>
               <ol>
-                <li>Open the DMS in any pane. Its tracks are listed with their compression modes and both CRCs; a DMS holds a whole floppy, not a directory.</li>
+                <li>Open the DMS in any pane. Its tracks are listed with their compression modes and both checksums; a DMS holds a whole floppy, not a directory.</li>
                 <li>Choose <strong>Tools → Convert archive to disk</strong>.</li>
                 <li>Select ADF or ADZ as the destination format.</li>
                 <li>Every track is written back at the cylinder it came from, so the result is the disk the archive was made from. A track the archive omits, which DiskMasher does for an empty one, is left as zeroes.</li>
@@ -581,7 +581,7 @@ function showHelp() {
                 <li>Choose which other pane receives the rebuilt disk, then browse it like any other volume.</li>
               </ol>
             </div>
-            <p>Double-click an individual DMS track to open its hex view, or use the download arrow beside its name to export the raw cylinder. A track stored uncompressed can be replaced when its length does not change; save first opens a structural review listing every changed and preserved track. The rebuild changes only the selected payload and its CRCs, and every other track retains its exact bytes. A track that is incomplete, compressed, or whose replacement changes length stays read-only. <strong>Tools → DMS archive project</strong> shows the full track inventory and the reason each one is writable or protected. A DMS stored inside another filing system follows the same rules: detection uses the content, so a file named <code>Games/Thrust</code> opens as a DMS without a <code>.dms</code> suffix, and a gzip-compressed archive works too. Drag the archive onto a hard-drive pane to rebuild the disk and copy its files into a new drawer.</p>
+            <p>Double-click an individual DMS track to open its hex view, or use the download arrow beside its name to export the raw cylinder. A track stored uncompressed can be replaced when its length does not change; save first opens a structural review listing every changed and preserved track. The rebuild changes only the selected payload and its checksums, and every other track retains its exact bytes. A track that is incomplete, compressed, or whose replacement changes length stays read-only. <strong>Tools → DMS archive project</strong> shows the full track inventory and the reason each one is writable or protected. A DMS stored inside another filing system follows the same rules: detection uses the content, so a file named <code>Games/Thrust</code> opens as a DMS without a <code>.dms</code> suffix, and a gzip-compressed archive works too. Drag the archive onto a hard-drive pane to rebuild the disk and copy its files into a new drawer.</p>
           </section>
           <section id="help-transfer">
             <h3>Copy and drag between panes</h3>

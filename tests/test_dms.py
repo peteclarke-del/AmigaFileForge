@@ -22,6 +22,7 @@ from app.dms import (
     parse_dms,
     replace_dms_file,
     rewrite_basic_loader,
+    simple_sum,
     to_adf,
     unpack_rle,
 )
@@ -45,7 +46,7 @@ def build_track(number: int, data: bytes, *, mode: int = 0, flags: int = 0) -> b
     header[0:2] = b"TR"
     struct.pack_into(
         ">HHHHHBBHH", header, 2,
-        number, 0, len(data), 0, len(data), flags, mode, crc16(data), crc16(data),
+        number, 0, len(data), 0, len(data), flags, mode, simple_sum(data), crc16(data),
     )
     struct.pack_into(">H", header, 18, crc16(bytes(header[:18])))
     return bytes(header) + data
@@ -169,10 +170,49 @@ class DMSRebuildTests(unittest.TestCase):
 
     def test_an_archive_with_an_undecodable_track_refuses_to_rebuild(self):
         archive = build_archive(
-            [build_track(0, b"A" * TRACK_SIZE), build_track(1, b"x" * 100, mode=6)]
+            [build_track(0, b"A" * TRACK_SIZE), build_track(1, b"x" * TRACK_SIZE, mode=6)]
         )
         with self.assertRaisesRegex(DMSError, "could not be unpacked"):
             to_adf(archive)
+
+
+class XDMSCompatibilityTests(unittest.TestCase):
+    """Archives laid out as DiskMasher and xDMS lay them out."""
+
+    def test_the_unpacked_track_is_checked_with_the_xdms_sum(self):
+        data = bytes(range(256)) * (TRACK_SIZE // 256)
+        self.assertNotEqual(simple_sum(data), crc16(data))
+        self.assertTrue(parse_dms(build_archive([build_track(0, data)])).files[0].crc_ok)
+
+        # A CRC-16 in the unpacked field is what xDMS rejects as a bad sum.
+        track = bytearray(build_track(0, data))
+        struct.pack_into(">H", track, 14, crc16(data))
+        struct.pack_into(">H", track, 18, crc16(bytes(track[:18])))
+        contents = parse_dms(build_archive([bytes(track)]))
+        self.assertFalse(contents.files[0].crc_ok)
+        self.assertTrue(any("bad checksum" in warning for warning in contents.warnings))
+
+    def test_banner_and_file_id_diz_are_left_out_of_the_adf(self):
+        archive = build_archive(
+            [
+                build_track(0xFFFF, b"Packed by a swapper\n"),
+                build_track(0, b"A" * TRACK_SIZE),
+                build_track(1, b"B" * TRACK_SIZE),
+                build_track(80, b"FILE_ID.DIZ text\n" * 20),
+            ]
+        )
+        self.assertEqual(to_adf(archive), b"A" * TRACK_SIZE + b"B" * TRACK_SIZE)
+
+    def test_a_short_advertising_boot_block_does_not_overwrite_track_zero(self):
+        archive = build_archive(
+            [build_track(0, b"AD" * 512), build_track(0, b"A" * TRACK_SIZE)]
+        )
+        self.assertEqual(to_adf(archive), b"A" * TRACK_SIZE)
+
+    def test_a_high_density_archive_rebuilds_at_twenty_two_sectors_a_track(self):
+        cylinder = 2 * TRACK_SIZE
+        archive = build_archive([build_track(0, b"H" * cylinder), build_track(1, b"D" * cylinder)])
+        self.assertEqual(to_adf(archive), b"H" * cylinder + b"D" * cylinder)
 
 
 class DMSProjectTests(unittest.TestCase):
@@ -194,6 +234,10 @@ class DMSProjectTests(unittest.TestCase):
         self.assertEqual(report["length"], TRACK_SIZE)
         self.assertEqual(parse_dms(rebuilt).files[0].data, b"B" * TRACK_SIZE)
         self.assertTrue(parse_dms(rebuilt).files[0].crc_ok)
+        # xDMS reads offset 14 as the sum of the unpacked data.
+        self.assertEqual(
+            struct.unpack_from(">H", rebuilt, HEADER_SIZE + 14)[0], simple_sum(b"B" * TRACK_SIZE)
+        )
 
     def test_a_different_length_replacement_is_refused(self):
         archive = build_archive([build_track(0, b"A" * TRACK_SIZE)])

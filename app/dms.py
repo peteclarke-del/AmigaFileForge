@@ -7,9 +7,10 @@ cannot represent, and why converting one is a real operation rather than a
 rename.
 
 The structure is a 56-byte archive header followed by a run of 20-byte track
-headers, each with its packed data inline. Every track is checksummed twice,
-once packed and once unpacked, so a truncated download is detected rather than
-silently producing a disk full of zeros.
+headers, each with its packed data inline. Every track is checked twice: a
+CRC-16 of the packed data and a 16-bit sum of the unpacked data, as xDMS
+does, so a truncated download is detected rather than silently producing a
+disk full of zeros.
 
 Every mode is unpacked in-tree: ``NOCOMP``, ``SIMPLE``, ``QUICK``, ``MEDIUM``,
 ``DEEP``, ``HEAVY1`` and ``HEAVY2``, plus the
@@ -37,6 +38,11 @@ TRACK_MAGIC = b"TR"
 #: Eighty of them make the 880 KiB an AmigaDOS double-density disk holds.
 TRACK_SIZE = 2 * 11 * 512
 BLOCK_SIZE = 512
+
+#: Tracks this short are not disk data. DiskMasher stores a FILE_ID.DIZ as
+#: track 80, a banner as track 0xFFFF and sometimes an advertising boot block
+#: as a short track 0; xDMS writes only tracks longer than this to the disk.
+PSEUDO_TRACK_LIMIT = 2048
 
 COMPRESSION_MODES = {
     0: "NOCOMP",
@@ -127,7 +133,11 @@ def crc16(data: bytes) -> int:
 
 
 def simple_sum(data: bytes) -> int:
-    """The plain additive checksum used by the archive header."""
+    """The 16-bit sum of bytes DMS stores for each track after unpacking.
+
+    xDMS checks unpacked track data with this sum (``Calc_CheckSum``) and
+    only the packed data and the headers with ``crc16``.
+    """
     return sum(data) & 0xFFFF
 
 
@@ -263,7 +273,7 @@ def parse_dms(data: bytes) -> DMSContents:
                     int(track["unpacked_length"]),
                     int(track["flags"]),
                 )
-                crc_ok = crc16(payload) == track["unpacked_crc"]
+                crc_ok = simple_sum(payload) == track["unpacked_crc"]
                 complete = crc_ok and len(payload) == int(track["unpacked_length"])
                 if not crc_ok:
                     warnings.append(f"Track {number} unpacked with a bad checksum.")
@@ -313,29 +323,40 @@ def parse_dms(data: bytes) -> DMSContents:
     )
 
 
+def is_disk_track(track: DMSFile) -> bool:
+    """Whether a track holds disk data rather than a banner or FILE_ID.DIZ."""
+    return track.number < 200 and track.unpacked_length > PSEUDO_TRACK_LIMIT
+
+
 def to_adf(data: bytes) -> bytes:
     """Rebuild the complete disk image an archive was made from.
 
     Tracks are written at their declared positions rather than in the order
     they appear, so an archive that omits empty tracks -- which DiskMasher does
     by default -- still produces a correctly sized image with the gaps zeroed.
+    The banner, FILE_ID.DIZ and advertising boot block pseudo-tracks are left
+    out, and the cylinder size comes from the tracks themselves, so a
+    high-density archive rebuilds at 22 sectors a track.
     """
     contents = parse_dms(data)
-    disk_tracks = [track for track in contents.files if track.number < 200]
+    disk_tracks = [track for track in contents.files if is_disk_track(track)]
     if not disk_tracks:
         raise DMSError("The archive contains no disk tracks to rebuild.")
     missing = [track.number for track in disk_tracks if not track.complete]
-    highest = max(track.number for track in disk_tracks)
-    image = bytearray(TRACK_SIZE * (highest + 1))
-    for track in disk_tracks:
-        start = track.number * TRACK_SIZE
-        image[start : start + len(track.data)] = track.data
     if missing:
         raise DMSError(
             f"{len(missing)} track(s) could not be unpacked: "
             + ", ".join(str(number) for number in missing[:8])
             + ("…" if len(missing) > 8 else "")
         )
+    cylinder_size = disk_tracks[0].unpacked_length
+    if any(track.unpacked_length != cylinder_size for track in disk_tracks):
+        raise DMSError("The archive mixes tracks of different sizes, so it is not one disk.")
+    highest = max(track.number for track in disk_tracks)
+    image = bytearray(cylinder_size * (highest + 1))
+    for track in disk_tracks:
+        start = track.number * cylinder_size
+        image[start : start + len(track.data)] = track.data
     return bytes(image)
 
 
@@ -429,7 +450,9 @@ def replace_dms_file(data: bytes, file_index: int, replacement: bytes) -> tuple[
     rebuilt = bytearray(data)
     rebuilt[track.data_start : track.end] = replacement
     header_start = track.start
-    struct.pack_into(">H", rebuilt, header_start + 14, crc16(replacement))
+    # Offset 14 is the sum of the unpacked data, offset 16 the CRC of the
+    # stored data; for an uncompressed track the two cover the same bytes.
+    struct.pack_into(">H", rebuilt, header_start + 14, simple_sum(replacement))
     struct.pack_into(">H", rebuilt, header_start + 16, crc16(replacement))
     struct.pack_into(
         ">H",
@@ -531,6 +554,7 @@ __all__ = [
     "DMSError",
     "DMSFile",
     "HEADER_SIZE",
+    "PSEUDO_TRACK_LIMIT",
     "SUPPORTED_MODES",
     "TRACK_HEADER_SIZE",
     "TRACK_SIZE",
@@ -538,6 +562,7 @@ __all__ = [
     "crc16",
     "dms_editability",
     "dms_project",
+    "is_disk_track",
     "is_tokenized_basic",
     "parse_dms",
     "replace_dms_file",
