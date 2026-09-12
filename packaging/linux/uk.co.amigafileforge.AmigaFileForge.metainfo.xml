@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
   <releases>
+    <release version="1.4.1" date="2026-09-12">
+      <description>
+        <p>Fixes opening DiskMasher archives. Every real DMS file was reported as damaged and could not be rebuilt as an ADF, because each unpacked track was checked against the wrong kind of checksum. Archives now decode to the same disk image xDMS produces, the banner and FILE_ID.DIZ notes some archives carry are left off the disk, and high-density archives rebuild at their full size.</p>
+      </description>
+    </release>
     <release version="1.4.0" date="2026-09-09">
       <description>
         <p>Opens CD images. A disc browses as a read-only pane, read from the file rather than into memory, and carries across the protection bits and comments that Amiga CDs record. Recognises the AmigaOS 3.5 and 3.9 discs and checks the processor and the target drive before an emulator is started, then boots the drive with the disc attached and the CD driver switched on so the disc actually appears.</p>
