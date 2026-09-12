@@ -13,7 +13,7 @@ copyright holder.
 | Flask | 3.1.3 | BSD-3-Clause | <https://github.com/pallets/flask> |
 | Gunicorn | 26.2.0 | MIT | <https://github.com/benoitc/gunicorn> |
 | Capstone | 5.0.9 | BSD-3-Clause | <https://github.com/capstone-engine/capstone> |
-| Playwright | 1.62.1, development and browser tests | Apache-2.0 | <https://github.com/microsoft/playwright> |
+| Playwright | 1.63.0, development and browser tests | Apache-2.0 | <https://github.com/microsoft/playwright> |
 
 The AmigaDOS filing-system engine in `amiganut/` is part of this project, not a
 third-party dependency. It is covered by the same MIT licence as the rest of
