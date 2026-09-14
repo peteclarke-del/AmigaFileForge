@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .amiga_metadata import format_protection
+from .branding import HOMEPAGE
 from .checksum import sha256_path
 from .ofs_compat import ofs_catalogue_files
 from . import amiga_paths
@@ -181,7 +182,7 @@ def build_download_readme(
         f"# {session.name}",
         "",
         "This archive was prepared by Amiga File Forge, the open-source Amiga image workshop.",
-        "Project: https://github.com/peteclarke-del/AmigaFileForge",
+        f"Project: {HOMEPAGE}",
         "",
         "## Image details",
         "",
@@ -327,7 +328,7 @@ def build_download_readme(
             "Complete disk images keep file metadata inside their own catalogues, so they do not need an image-level .inf sidecar. Loose files exported from Amiga File Forge are packaged with a matching .inf file instead.",
             "OFS and HDF cannot preserve flux timing, weak sectors or every copy-protection feature. HFE can contain track-level information that is not representable after filesystem editing.",
             "FFS directory and free-space metadata must match the selected hardware profile. Hardfile HDA images also require their matching GEO geometry.",
-            "For current documentation, releases and issue reporting, visit https://github.com/peteclarke-del/AmigaFileForge.",
+            f"For current documentation, releases and issue reporting, visit {HOMEPAGE}.",
             "",
         )
     )

@@ -133,6 +133,7 @@ class DesktopServer:
         paths = desktop_paths()
         self.work_dir = Path(work_dir or paths.work)
         self.config_dir = paths.config if work_dir is None else self.work_dir.parent / "config"
+        self.cache_dir = paths.cache if work_dir is None else self.work_dir.parent / "cache"
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.token = secrets.token_urlsafe(32)
         self.owner = _stable_owner(self.config_dir)
@@ -142,6 +143,7 @@ class DesktopServer:
             desktop_token=self.token,
             desktop_owner=self.owner,
             desktop_state_path=self.config_dir / "client-state.json",
+            desktop_update_dir=self.cache_dir / "updates",
         )
         self._server: BaseWSGIServer | None = None
         self._thread: threading.Thread | None = None

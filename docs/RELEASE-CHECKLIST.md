@@ -49,8 +49,9 @@ Use the real release value. Do not copy the example unchanged.
 - [ ] `tools/build-release.sh` creates a source archive, native `.deb` and
       `SHA256SUMS` from the clean tagged tree.
 - [ ] `.github/workflows/release.yml` builds Debian 13 and Ubuntu 24.04
-      packages for AMD64, ARM64 and ARMv7, inspects their metadata and imports
-      their vendored native dependencies before publication.
+      packages for AMD64, ARM64 and ARMv7, inspects their metadata, imports
+      their vendored native dependencies and checks the system each package
+      records for Check for Application Updates before publication.
 
 ## 2. Documentation
 
