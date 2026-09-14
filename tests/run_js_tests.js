@@ -5,3 +5,4 @@ require("./js/assembly-language.test.js");
 require("./js/code-editor-help.test.js");
 require("./js/workspace.test.js");
 require("./js/collection-catalogue.test.js");
+require("./js/app-update.test.js");

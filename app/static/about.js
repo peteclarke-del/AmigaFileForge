@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  function create({ showModal, esc, context }) {
+  function create({ showModal, esc, context, attachUpdates = null }) {
     return function showAbout() {
       const details = context();
       const host = details.host === "desktop" ? "Linux desktop application" : "Web application";
@@ -10,6 +10,7 @@
           <img src="/favicon.svg" alt="">
           <div><small>AMIGA FILE IMAGE WORKSHOP</small><h2>Amiga File Forge</h2><p>Version ${esc(details.version)}</p></div>
         </header>
+        <section class="about-update" data-app-update aria-live="polite" aria-label="Application updates" tabindex="-1"></section>
         <p>Create, inspect, edit, convert, validate and deploy Amiga media images from one shared workbench.</p>
         <dl class="about-facts">
           <dt>Edition</dt><dd>${esc(host)}</dd>
@@ -25,6 +26,7 @@
         </nav>
         <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div>
       </div>`);
+      attachUpdates?.();
     };
   }
 

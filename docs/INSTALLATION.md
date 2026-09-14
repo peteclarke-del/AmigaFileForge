@@ -26,7 +26,9 @@ sudo apt install ./amiga-file-forge_1.4.1-1~deb13_amd64.deb
 
 Launch **Amiga File Forge** from the application menu, open an associated image
 from the file manager, or run `amiga-file-forge`. Upgrade by installing the new
-package over the old one. Remove the program with:
+package over the old one, or from the About box as
+[Check for Application Updates](#check-for-application-updates) describes.
+Remove the program with:
 
 ```bash
 sudo apt remove amiga-file-forge
@@ -61,6 +63,48 @@ should use a controlled network or approved source and Python package mirrors.
 archive, current-system `.deb` and `SHA256SUMS`. The tag-driven release workflow
 builds and inspects Debian 13 and Ubuntu 24.04 packages for AMD64, ARM64 and
 ARMv7 before it publishes them with a combined checksum manifest.
+
+### Check for Application Updates
+
+**About Amiga File Forge**, in the **Help** menu, has a **Check for
+Application Updates** button. Nothing is sent until you press it. It asks
+GitHub for the latest release and compares its version with the one shown
+above the button. Drafts and prereleases are never offered. The answer appears under the button: that
+this is the newest version, or the newer version and the one you have. When
+GitHub cannot be reached, or its answer cannot be read, it says Could not
+check for a newer version, with the reason, and never that this is the newest
+version.
+
+A release package offers **Update to** followed by the new version:
+
+1. Press it. A question names the package for your system, such as Debian 13
+   amd64, and its size.
+2. Press **Download and Install**. The package built for the same distribution
+   and architecture as the installed one is downloaded from GitHub and checked
+   against the `SHA256SUMS` file published with it. A package that does not
+   match is deleted and nothing is installed.
+3. The system asks for your password, and `pkexec apt-get install` installs the
+   package over the old one. Working images, preferences, profiles and the
+   collection are kept.
+4. Press **Restart Amiga File Forge** to start the new version.
+
+Closing the About box does not stop a download, and reopening it shows how far
+it has got. **Cancel** stops the download. Installing waits for as long as the
+password prompt is open; once you answer it, APT runs to the end and cannot be
+cancelled. While a floppy disk is being read or written, the update is not
+installed and the application does not restart; wait until the disk is done.
+
+Each package records the system it was built for in
+`/opt/amiga-file-forge/package-target` when the release workflow builds it, so
+the update takes the package made for that system rather than guessing from
+the running one. The Docker service, a source checkout and a package built
+without a release revision have no such record. They cannot update themselves,
+and the button opens the release page instead. Update those the way they were
+installed. A release that has no package for your system is also sent to its
+release page.
+
+The first version with this button can update only to releases published
+after it.
 
 Return to the [documentation index](README.md) for media, editor, ROM, firmware
 and release references.
@@ -397,6 +441,17 @@ emulators run through a virtual display inside the container. Firmware is
 audited before compatible Amiga 4000 actions are enabled. See the
 [firmware notes](../firmware/README.md).
 
+### Check for Application Updates cannot check or install
+
+Could not check for a newer version, followed by a reason, means GitHub could
+not be reached or its answer could not be read. GitHub answers at most 60
+requests an hour from one address without an account; try again later. The
+update failed, followed by a reason, comes from the download or from APT. When
+the system refuses the installation, or `pkexec` is not installed, the message
+gives the command to run in a terminal instead: `sudo apt install` followed by
+the downloaded package, which is kept in `~/.cache/amiga-file-forge/updates`.
+Dismissing the password prompt installs nothing and leaves the update offered.
+
 ### Browser cannot recover a session
 
 Confirm the same browser profile is being used, the named volume still exists
@@ -408,6 +463,9 @@ different port. Browser identity and server-side session bytes are both needed.
 - The application does not require a cloud account.
 - Online Library searches contact enabled public catalogue sites through the
   server when the user starts a search.
+- Check for Application Updates contacts GitHub through the server only when
+  the button in the About box is pressed, and downloads a package only when
+  the user chooses to install it.
 - Uploaded images remain in the local Docker work volume unless the operator
   has separately configured remote storage or backups.
 - Managed emulator ports do not provide authentication.

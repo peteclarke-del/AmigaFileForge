@@ -146,15 +146,20 @@ test("the application header exposes handbook and about help actions", () => {
 
 test("about content uses runtime version and host metadata", () => {
   let markup = "";
+  let attached = 0;
   const showAbout = about.create({
     showModal(value) { markup = value; },
     esc: value => String(value),
     context: () => ({ version: "1.2.3", engine: "amiganut", host: "desktop" }),
+    attachUpdates: () => { attached += 1; },
   });
   showAbout();
   assert.match(markup, /Version 1\.2\.3/);
   assert.match(markup, /Linux desktop application/);
   assert.match(markup, /Third-party notices/);
+  // The update control is given its place once the box is open.
+  assert.match(markup, /data-app-update/);
+  assert.equal(attached, 1);
 });
 
 test("editor workspace persistence validates, limits and restores documents", () => {

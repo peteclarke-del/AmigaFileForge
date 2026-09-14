@@ -25,6 +25,7 @@ from amiga_greaseweazle import (
     stable_snapshot,
 )
 
+from ..app_update import Activity
 from ..disk_service import DiskError, DiskService
 from ..desktop_state import DesktopClientState
 from ..image_opening import open_image_path, open_rom_component_paths
@@ -163,8 +164,13 @@ def create_desktop_blueprint(
     service: DiskService,
     operations: OperationRegistry | None = None,
     client_state: DesktopClientState | None = None,
+    media_activity: Activity | None = None,
 ) -> Blueprint:
     operations = operations or OperationRegistry()
+    # Every route that reads or writes a disk in a drive holds this while it
+    # runs, so an application update or restart waits instead of cutting the
+    # disk off half written.
+    media_activity = media_activity or Activity()
     blueprint = Blueprint("desktop", __name__)
 
     @blueprint.get("/api/desktop/client-state")
@@ -237,6 +243,7 @@ def create_desktop_blueprint(
 
     @blueprint.post("/api/desktop/images/<image_id>/physical-floppy")
     @request_effect("external", "writing a physical floppy through Greaseweazle")
+    @media_activity.guard
     def write_physical_floppy(image_id):
         data = payload()
         session = service.get(image_id)
@@ -260,6 +267,7 @@ def create_desktop_blueprint(
 
     @blueprint.post("/api/desktop/physical-floppy/read")
     @request_effect("external", "reading a physical floppy through Greaseweazle")
+    @media_activity.guard
     def read_physical_floppy():
         """Capture a disk in a connected drive and open it as a new image.
 
@@ -324,6 +332,7 @@ def create_desktop_blueprint(
 
     @blueprint.post("/api/desktop/floppy-drive/read")
     @request_effect("external", "reading a disk from a floppy controller")
+    @media_activity.guard
     def read_floppy_drive():
         """Capture a disk from a real drive and open it as a new image."""
         data = payload()
@@ -352,6 +361,7 @@ def create_desktop_blueprint(
 
     @blueprint.post("/api/desktop/floppy-drive/write")
     @request_effect("external", "writing a disk through a floppy controller")
+    @media_activity.guard
     def write_floppy_drive():
         """Write an open image to a real drive, erasing the disk in it."""
         data = payload()

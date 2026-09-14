@@ -79,6 +79,7 @@ jobs:
           PACKAGE_IMAGE: ${{ matrix.distro.image }}
           PACKAGE_PLATFORM: ${{ matrix.arch.platform }}
           PACKAGE_REVISION: -1~${{ matrix.distro.id }}
+          PACKAGE_DISTRO: ${{ matrix.distro.id }}
           PACKAGE_TARGET: ${{ matrix.distro.label }}
           PACKAGE_ARCHITECTURE: ${{ matrix.arch.debian }}
         run: |
@@ -88,6 +89,7 @@ jobs:
             --env AMIGA_PACKAGE_REVISION="$PACKAGE_REVISION" \
             --env AMIGA_PACKAGE_TARGET="$PACKAGE_TARGET" \
             --env EXPECTED_ARCHITECTURE="$PACKAGE_ARCHITECTURE" \
+            --env EXPECTED_DISTRO="$PACKAGE_DISTRO" \
             --env EXPECTED_PACKAGE_TARGET="$PACKAGE_TARGET" \
             --env DEBIAN_FRONTEND=noninteractive \
             --volume "${{ github.workspace }}:/source" \
@@ -109,6 +111,11 @@ jobs:
               cd "$stage/opt/amiga-file-forge"
               PYTHONPATH="$stage/opt/amiga-file-forge/vendor:$stage/opt/amiga-file-forge" python3 -c "import flask; import amiganut.filesystem; import amiganut.kickfs; from capstone import CS_ARCH_M68K, CS_MODE_M68K_000, Cs; Cs(CS_ARCH_M68K, CS_MODE_M68K_000); from app.server import create_app; print(\"Package runtime gate passed\")"
               LD_LIBRARY_PATH="$stage/opt/amiga-file-forge/native/lib" "$stage/opt/amiga-file-forge/native/bin/hxcfe" -help >/dev/null
+              # The update check in the About box takes the package made for
+              # the system this one records, by the name the release publishes
+              # it under, with the tilde of its revision as a dot.
+              published=$(basename "$package" | tr "~" ".")
+              PYTHONPATH="$stage/opt/amiga-file-forge/vendor:$stage/opt/amiga-file-forge" python3 -c "from app import app_update; target = app_update.installed_target(); assert target == app_update.PackageTarget(\"$EXPECTED_DISTRO\", \"$EXPECTED_ARCHITECTURE\", \"$EXPECTED_PACKAGE_TARGET\"), target; assert target.package_revision(\"$published\", \"$(cat VERSION)\") is not None, \"$published\"; print(\"Package target gate passed:\", target.system)"
               rm -rf "$stage"
             '
 
