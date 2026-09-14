@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 
 PLATFORM_CONTRACT_FORMAT = "amiga-file-forge-platform-contract"
-PLATFORM_CONTRACT_VERSION = 7
+PLATFORM_CONTRACT_VERSION = 8
 PLATFORM_KINDS = frozenset({"web", "desktop"})
 
 # A capability belongs here only when both hosts expose the same implementation
@@ -24,6 +24,7 @@ SHARED_CAPABILITIES = (
     "workflow-recipes",
     "managed-emulators",
     "hardware-deployment",
+    "application-update-check",
 )
 
 HOST_CAPABILITIES = {
@@ -38,6 +39,7 @@ HOST_CAPABILITIES = {
         "physical-floppy-write",
         "physical-floppy-read",
         "floppy-controller",
+        "application-update-install",
     ),
 }
 
@@ -55,6 +57,9 @@ HOST_EXCLUSIVE_ENDPOINTS = {
         "desktop.floppy_drive_status",
         "desktop.read_floppy_drive",
         "desktop.write_floppy_drive",
+        "app_update.install_app_update",
+        "app_update.cancel_app_update",
+        "app_update.restart_after_app_update",
     }),
 }
 

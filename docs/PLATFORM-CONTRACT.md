@@ -62,6 +62,15 @@ private working-copy creation and every operation after opening remain shared.
 Hardware deployment continues to use the same target planner, isolated
 snapshot, ZIP builder and workbench interface in both hosts.
 
+Platform contract version 8 records the application update. Checking for a
+newer release is shared: both hosts serve `/api/app-update` and its check, and
+the About box shows the same states. Installing is a desktop adapter,
+`application-update-install`, because only the desktop host runs as the
+signed-in user, where `pkexec` can ask for their password. Its install, cancel
+and restart routes do not exist in the web host, so a browser on another
+computer cannot start an installation on the server. The web host is always
+sent to the release page.
+
 ## Storage and security
 
 The web host uses the configured Docker work directory and browser-owner

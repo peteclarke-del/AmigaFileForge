@@ -62,6 +62,17 @@ cp -a \
 mkdir -p "$application/tools"
 cp "$project_root/tools/linux-desktop-environment.sh" "$application/tools/"
 cp "$project_root/VERSION" "$application/"
+# A release package records the system it was built for beside VERSION. The
+# About box's update check reads it (app/app_update.py, PACKAGE_TARGET) to take
+# the package made for the same system. The distribution is the part of the
+# revision after the tilde, deb13 in -1~deb13, which also names the release
+# asset. A package built without a revision belongs to no release, records
+# nothing, and is sent to the release page instead.
+if [ -n "$package_revision" ]; then
+    printf 'distro=%s\narch=%s\nlabel=%s\n' \
+        "${package_revision#*~}" "$architecture" "$package_target" \
+        > "$application/package-target"
+fi
 
 if [ -n "${AMIGA_HXC_RUNTIME_DIR:-}" ]; then
     for required in \

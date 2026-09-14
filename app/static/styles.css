@@ -1269,6 +1269,12 @@ dialog:has(.help-guide) { width: min(1120px, calc(100vw - 24px)); }
 .about-facts dt { color: var(--muted); font: 700 9px DM Mono, monospace; text-transform: uppercase; }
 .about-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 11px; }
 .about-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.about-update { display: grid; gap: 8px; }
+.about-update:focus { outline: none; }
+.about-update-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.about-update-size { color: var(--muted); font: 10px DM Mono, monospace; }
+.about-update-status { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; user-select: text; }
+.about-update-page { justify-self: start; font-size: 11px; }
 .installed-menu-preview { display: grid; gap: 14px; }
 .menu-preview-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
 .menu-preview-heading h2 { margin: 2px 0 0; }
