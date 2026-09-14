@@ -7,9 +7,11 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, request
 
+from .app_update import Activity, AppUpdater, installed_target
 from .disk_service import SESSION_OWNER, DiskError, DiskService
 from .desktop_state import DesktopClientState
 from .operations import OperationRegistry
+from .routes.app_update import create_app_update_blueprint
 from .routes.files import create_files_blueprint
 from .routes.hex_editor import create_hex_editor_blueprint
 from .routes.catalog import create_catalog_blueprint
@@ -52,6 +54,7 @@ def create_app(
     desktop_token: str | None = None,
     desktop_owner: str | None = None,
     desktop_state_path: Path | str | None = None,
+    desktop_update_dir: Path | str | None = None,
 ) -> Flask:
     application = Flask(__name__, static_folder="static", static_url_path="")
     runtime = platform_runtime(platform, desktop_token)
@@ -65,6 +68,16 @@ def create_app(
     application.config["AMIGA_PLATFORM"] = runtime.public_contract()
     service = DiskService(active_work_dir)
     operations = OperationRegistry(active_work_dir / "operations.json")
+    # Reading or writing a floppy disk counts as activity an application
+    # update and a restart must wait for. Only the desktop host installs, and
+    # only a package built for a release knows which system it was built for.
+    media_activity = Activity()
+    app_updater = AppUpdater(
+        installed_target() if runtime.kind == "desktop" else None,
+        folder=Path(desktop_update_dir) if desktop_update_dir else active_work_dir / "updates",
+        activity=media_activity,
+    )
+    application.extensions["amiga_app_updater"] = app_updater
 
     @application.before_request
     def authenticate_desktop_host():
@@ -143,10 +156,15 @@ def create_app(
     )
     application.register_blueprint(create_rom_tools_blueprint(service, ROOT))
     application.register_blueprint(create_install_blueprint(service, operations))
+    application.register_blueprint(
+        create_app_update_blueprint(app_updater, desktop=runtime.kind == "desktop")
+    )
     if runtime.kind == "desktop":
         state_path = Path(desktop_state_path) if desktop_state_path else active_work_dir / "client-state.json"
         application.register_blueprint(
-            create_desktop_blueprint(service, operations, DesktopClientState(state_path))
+            create_desktop_blueprint(
+                service, operations, DesktopClientState(state_path), media_activity
+            )
         )
 
     @application.errorhandler(DiskError)

@@ -67,12 +67,19 @@ bug bounty or promise payment for reports.
 
 ## Outbound network policy
 
-The online library and metadata lookup are the only features that make outbound
-requests. Requests are restricted to `http` and `https`, and to publicly
-routable addresses. A catalogue source that resolves to a loopback, private,
-link-local, reserved or multicast address is refused before any connection is
-made, so an editable source list cannot be used to reach services that only the
-host can see.
+The online library, the metadata lookup and Check for Application Updates are
+the only features that make outbound requests. The update check asks GitHub's
+API for the latest release only when the button in the About box is pressed,
+and downloads a package only when the user chooses to install it. The package
+is installed only after it matches the release's published `SHA256SUMS`, and
+only by the desktop host, where `pkexec` asks the user for their password. The
+web host has no route that installs anything.
+
+Online library and metadata requests are restricted to `http` and `https`, and
+to publicly routable addresses. A catalogue source that resolves to a loopback,
+private, link-local, reserved or multicast address is refused before any
+connection is made, so an editable source list cannot be used to reach services
+that only the host can see.
 
 The check runs immediately before each request rather than when a source is
 saved, because a destination that was acceptable when configured may not be

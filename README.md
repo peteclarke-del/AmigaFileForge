@@ -2289,6 +2289,19 @@ the filesystem engine, and open the source, release and third-party notice
 pages. The version comes from the same `VERSION` file used by packages and
 release tags.
 
+The About box also has **Check for Application Updates**. Nothing is sent
+until it is pressed. It asks GitHub for the latest release and compares it with
+the running version. A package installed from a release then offers
+**Update to** the new version: the package built for the same Debian or Ubuntu
+release and architecture is downloaded, checked against the release's
+`SHA256SUMS` and installed with APT after the system asks for your password,
+and **Restart Amiga File Forge** starts it. Working images and preferences are
+kept. Nothing is installed, and the application does not restart, while a
+floppy disk is being read or written. The Docker service and a source checkout
+cannot update themselves and are sent to the release page instead.
+[Installation](docs/INSTALLATION.md#check-for-application-updates) has the
+details.
+
 Browser state is not a substitute for saving. Download important work before
 upgrading the container, deleting its volume, or cleaning Docker storage.
 
