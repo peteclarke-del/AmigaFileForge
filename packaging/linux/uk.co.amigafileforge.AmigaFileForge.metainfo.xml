@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
   <releases>
+    <release version="1.5.0" date="2026-09-14">
+      <description>
+        <p>Adds Check for Application Updates to the About box. Nothing is sent until it is pressed. It asks GitHub for the latest release and says whether a newer version exists. A package installed from a release can then download the package built for the same system, check it against the release's checksums, install it with APT after asking for the password, and restart. The Docker service and a source checkout are sent to the release page instead.</p>
+      </description>
+    </release>
     <release version="1.4.1" date="2026-09-12">
       <description>
         <p>Fixes opening DiskMasher archives. Every real DMS file was reported as damaged and could not be rebuilt as an ADF, because each unpacked track was checked against the wrong kind of checksum. Archives now decode to the same disk image xDMS produces, the banner and FILE_ID.DIZ notes some archives carry are left off the disk, and high-density archives rebuild at their full size.</p>
