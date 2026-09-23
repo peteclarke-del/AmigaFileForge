@@ -120,6 +120,10 @@ cp \
     "$project_root/THIRD_PARTY_NOTICES.md" \
     "$stage/usr/share/doc/amiga-file-forge/"
 cp "$project_root/LICENSE" "$stage/usr/share/doc/amiga-file-forge/copyright"
+# Shipped for the user to install, not installed: it gives the desktop user
+# raw access to every USB disk, which is their decision to make.
+cp "$project_root/packaging/linux/70-amiga-file-forge-usb-drives.rules" \
+    "$stage/usr/share/doc/amiga-file-forge/"
 cp -a "$project_root/docs" "$stage/usr/share/doc/amiga-file-forge/handbook"
 
 # Bytecode compiled by the build machine's interpreter is wrong for any other

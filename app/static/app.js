@@ -658,6 +658,9 @@ function renderPane(index, preserveScroll = false) {
     host.querySelector(".pane-open").onclick = () => chooseImage(index);
     host.querySelector(".pane-new").onclick = () => showCreateImageModal(index);
     host.querySelector(".pane-recover").onclick = () => recoverPreviousSession(index);
+    const driveButton = host.querySelector(".pane-drive");
+    driveButton.hidden = !hasHostCapability("attached-drive-access");
+    driveButton.onclick = () => chooseAttachedDrive(index).catch(error => toast(error.message, true));
     host.querySelector(".close-empty-pane").onclick = () => closePane(index);
     if (pane.loading) {
       host.querySelectorAll("button").forEach(button => {
@@ -675,6 +678,10 @@ function renderPane(index, preserveScroll = false) {
   const isPartitionIndex = pane.image.kind === "hdf" && pane.partition === null;
   const isDrive = pane.image.kind === "hdf";
   const isDMS = pane.image.kind === "dms";
+  //: A drive opened in place is changed directly, so everything that works on
+  //: a whole image file (saving, the hex editor, emulation, deployment,
+  //: compaction) is left out rather than offered and then refused.
+  const liveDrive = pane.image.attachedDrive || null;
   //: A CD is read-only by nature, so it offers browsing and copying out and
   //: none of the controls that would write to it.
   const isIso = pane.image.kind === "iso";
@@ -797,7 +804,7 @@ function renderPane(index, preserveScroll = false) {
       ${accessCell}`;
     return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${isVirtual ? " virtual-catalogue-row" : ""}${entry.catalogueBreak ? " catalogue-break" : ""}${rowIsPendingCut(pane, entry) ? " clipboard-cut" : ""}"${openHint}
       aria-selected="${selectedKeys.has(entryKey)}"
-      tabindex="0" draggable="${!isArchive && !isVirtual && !isPartitionIndex}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-path="${esc(entry.path || "")}" data-type="${entryType}" data-archive="${isArchiveFile ? "1" : "0"}" data-partition="${entry.partition ?? ""}" data-bank="${entry.bank ?? ""}" data-virtual="${isVirtual ? "1" : "0"}">
+      tabindex="0" draggable="${!isArchive && !isVirtual && (!isPartitionIndex || entryType === "partition")}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-path="${esc(entry.path || "")}" data-type="${entryType}" data-archive="${isArchiveFile ? "1" : "0"}" data-partition="${entry.partition ?? ""}" data-bank="${entry.bank ?? ""}" data-virtual="${isVirtual ? "1" : "0"}">
       ${cells}
     </tr>`;
   }).join("");
@@ -825,7 +832,12 @@ function renderPane(index, preserveScroll = false) {
     <div class="tool-menu-panel">
       ${newSubmenu}
       <button class="menu-command menu-load-image"><b>▤</b><span>Open image…</span></button>
-      <button class="menu-command menu-save-image"><b>⇩</b><span>Save image</span></button>
+      ${hasHostCapability("attached-drive-access") ? '<button class="menu-command menu-open-drive"><b>⛁</b><span>Open attached drive…</span></button>' : ""}
+      ${liveDrive
+        ? `<button class="menu-command menu-drive-writes" data-allow="${liveDrive.writesAllowed ? "0" : "1"}"><b>${liveDrive.writesAllowed ? "⊘" : "✎"}</b><span>${liveDrive.writesAllowed ? "Make drive read-only" : "Allow writes to drive…"}</span></button>
+          <button class="menu-command menu-export-drive"><b>⇄</b><span>Export drive to image file…</span></button>
+          <button class="menu-command menu-clone-drive"><b>⧉</b><span>Copy drive to another drive…</span></button>`
+        : '<button class="menu-command menu-save-image"><b>⇩</b><span>Save image</span></button>'}
       ${pane.image.exportFormats?.length ? `<button class="menu-command menu-export-image"><b>⇄</b><span>Export as…</span></button>` : ""}
       ${isDMS || pane.image.readOnly ? "" : `<span class="menu-separator" role="separator"></span>`}
       ${isPartitionIndex ? ""
@@ -885,10 +897,10 @@ function renderPane(index, preserveScroll = false) {
   const utilityTools = `<details class="tool-menu">
     <summary class="tool"><b>⋯</b><span>Tools</span></summary>
     <div class="tool-menu-panel tool-menu-panel-right">
-      <button class="menu-command open-hex-editor"><b>0x</b><span>Hex editor…</span></button>
+      ${liveDrive ? "" : `<button class="menu-command open-hex-editor"><b>0x</b><span>Hex editor…</span></button>
       ${emulatorActions}
       ${physicalFloppyAction}
-      <button class="menu-command build-deployment"><b>⇩</b><span>Build hardware deployment…</span></button>
+      <button class="menu-command build-deployment"><b>⇩</b><span>Build hardware deployment…</span></button>`}
       ${isPartitionIndex ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
       ${isFfsHdd ? '<button class="menu-command audit-ffs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
       ${acceptsInstall ? `<span class="menu-separator" role="separator"></span>
@@ -896,7 +908,7 @@ function renderPane(index, preserveScroll = false) {
         <button class="menu-command install-amigaos-cd"><b>◎</b><span>Install AmigaOS 3.5 or 3.9…</span></button>
         <button class="menu-command staged-installations"><b>▤</b><span>Staged installations…</span></button>`
         : '<button class="menu-command staged-installations"><b>▤</b><span>Staged installations…</span></button>'}
-      ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isKickfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-kickfs"><b>▥</b><span>Kickstart ROM properties…</span></button>'}` : isPartitionIndex || isDMS ? (isDMS ? '<button class="menu-command dms-project"><b>≋</b><span>DMS archive project…</span></button><button class="menu-command convert-dms"><b>⇥</b><span>Convert archive to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
+      ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isKickfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-kickfs"><b>▥</b><span>Kickstart ROM properties…</span></button>'}` : isPartitionIndex || isDMS ? (isDMS ? '<button class="menu-command dms-project"><b>≋</b><span>DMS archive project…</span></button><button class="menu-command convert-dms"><b>⇥</b><span>Convert archive to disk</span></button>' : "") : pane.image.readOnly || liveDrive ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
     </div>
   </details>`;
   const exportControl = exportAvailability(pane.image);
@@ -918,7 +930,7 @@ function renderPane(index, preserveScroll = false) {
       <div class="pane-head-actions" aria-label="Image actions">
         <button class="icon-button new-image" title="New Blank Image" aria-label="New Blank Image">${PANE_ICONS.newImage}</button>
         <button class="icon-button replace-image" title="Load New Image" aria-label="Load New Image">${PANE_ICONS.loadImage}</button>
-        <button class="icon-button save-image" title="Save Image" aria-label="Save Image">${PANE_ICONS.saveImage}</button>
+        <button class="icon-button save-image" title="${liveDrive ? "Save Image · changes go straight to the drive" : "Save Image"}" aria-label="Save Image"${liveDrive ? " disabled" : ""}>${PANE_ICONS.saveImage}</button>
         <button class="icon-button export-image" title="${esc(exportControl.label)}" aria-label="${esc(exportControl.label)}"${exportControl.available ? "" : " disabled"}>${PANE_ICONS.exportImage}</button>
         <button class="icon-button refresh-image" title="Refresh View" aria-label="Refresh View">${PANE_ICONS.refreshView}</button>
         <button class="icon-button minimize-pane" title="Minimise Pane" aria-label="Minimise Pane">${PANE_ICONS.minimizePane}</button>
@@ -936,7 +948,7 @@ function renderPane(index, preserveScroll = false) {
       ${loadingMarkup(pane)}
       ${(parentRow || rows) ? `<table class="file-list${isPartitionIndex ? " partition-list" : ""}${isRom ? " rom-bank-list" : " catalogue-file-list"}" role="grid" aria-label="${isPartitionIndex ? "Hard drive partitions" : isRom ? "ROM bank inventory" : "Files in " + esc(location)}"><thead><tr>${isPartitionIndex ? "<th>Device</th><th>Filing system</th><th>Size</th><th>Boot</th>" : isRom ? "<th>Bank and address</th><th>Identity</th><th>Purpose and entry points</th><th>Contents</th>" : '<th>Name</th><th>Kind</th><th>Size</th><th title="Datestamp of the last change">Modified</th><th title="File comment">Comment</th><th>Protection</th>'}</tr></thead><tbody>${parentRow}${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
     </div>
-    <footer class="pane-foot"><span>${pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isPartitionIndex ? `partition${pane.entries.length === 1 ? "" : "s"}` : isRom ? `bank${pane.entries.length === 1 ? "" : "s"}` : "objects"} · ${esc(pane.description || "")}</span>${capacityMarkup(pane.capacity)}</footer>`;
+    <footer class="pane-foot"><span>${liveDrive ? (liveDrive.writesAllowed ? "Drive opened in place · changes are written straight to it · " : "Drive opened in place · read-only · ") : pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isPartitionIndex ? `partition${pane.entries.length === 1 ? "" : "s"}` : isRom ? `bank${pane.entries.length === 1 ? "" : "s"}` : "objects"} · ${esc(pane.description || "")}</span>${capacityMarkup(pane.capacity)}</footer>`;
 
   fitPaneMenus(host);
 
@@ -957,8 +969,17 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".menu-new-matching-image")?.addEventListener("click", event => guardedPaneAction(index, () => newImageFromFileMenu(index, event.currentTarget.dataset.format)));
   host.querySelector(".menu-load-image")?.addEventListener("click", () => chooseImage(index));
   host.querySelector(".menu-save-image")?.addEventListener("click", () => guardedPaneAction(index, () => saveImage(index)));
+  host.querySelector(".menu-open-drive")?.addEventListener("click", () => chooseAttachedDrive(index).catch(error => toast(error.message, true)));
+  host.querySelector(".menu-drive-writes")?.addEventListener("click", event => {
+    const allow = event.currentTarget.dataset.allow === "1";
+    guardedPaneAction(index, () => setDriveWrites(index, allow));
+  });
+  host.querySelector(".menu-export-drive")?.addEventListener("click", () => guardedPaneAction(index, () => exportAttachedDrive(index).catch(error => toast(error.message, true))));
+  host.querySelector(".menu-clone-drive")?.addEventListener("click", () => guardedPaneAction(index, () => cloneAttachedDrive(index).catch(error => toast(error.message, true))));
   host.querySelector(".menu-export-image")?.addEventListener("click", () => guardedPaneAction(index, () => exportImageAs(index)));
-  host.querySelector(".export-image")?.addEventListener("click", () => guardedPaneAction(index, () => exportImageAs(index)));
+  host.querySelector(".export-image")?.addEventListener("click", () => guardedPaneAction(index, () => (
+    liveDrive ? exportAttachedDrive(index).catch(error => toast(error.message, true)) : exportImageAs(index)
+  )));
   host.querySelector(".menu-close-pane")?.addEventListener("click", () => closePane(index));
   host.querySelector(".view-refresh")?.addEventListener("click", () => refreshCurrentView(index));
   host.querySelector(".view-partitions")?.addEventListener("click", () => returnToPartitions(index));
@@ -1025,10 +1046,12 @@ function renderPane(index, preserveScroll = false) {
     diskHandle.setAttribute("aria-label", `${paneFormat(pane.image)} disk image. Drag to transfer it to another pane.`);
     diskHandle.ondragstart = event => {
       event.dataTransfer.effectAllowed = "copy";
-      event.dataTransfer.setData("application/x-amiga-disk", JSON.stringify({
-        image: pane.image.id, partition: pane.partition, name: pane.partitionName || pane.image.name
-      }));
+      const source = { image: pane.image.id, partition: pane.partition, name: pane.partitionName || pane.image.name };
+      activeDrag = pane.image.kind === "hdf" ? { kind: "partition", source } : { kind: "disk", source };
+      event.dataTransfer.setData("application/x-amiga-disk", JSON.stringify(source));
+      event.dataTransfer.setData("text/plain", source.name);
     };
+    diskHandle.ondragend = () => { activeDrag = null; };
   }
   wireDropZone(host, index);
   paneWindowManager.mount(index, host);
@@ -1076,8 +1099,7 @@ function wireRow(row, index) {
       if (event.key === "Enter") openEntry(index, row);
     };
     row.ondragover = event => {
-      const hasInternalFiles = event.dataTransfer.types.includes("application/x-amiga-files");
-      if (!hasInternalFiles && !event.dataTransfer.types.includes("Files")) return;
+      if (!draggingFiles(event) && !event.dataTransfer.types.includes("Files")) return;
       event.preventDefault();
       event.stopPropagation();
       row.classList.add("folder-drop-target");
@@ -1088,8 +1110,8 @@ function wireRow(row, index) {
       event.stopPropagation();
       row.classList.remove("folder-drop-target");
       const destination = row.dataset.name;
-      const encoded = event.dataTransfer.getData("application/x-amiga-files");
-      if (encoded) return transferFiles(index, JSON.parse(encoded), destination);
+      const internal = draggedFiles(event);
+      if (internal) return transferFiles(index, internal, destination);
       const dropped = await collectDroppedHostFiles(event.dataTransfer);
       const files = dropped.map(item => item.file);
       if (!files.length) return;
@@ -1182,7 +1204,14 @@ function wireRow(row, index) {
   };
   row.ondragstart = event => {
     const pane = panes[index];
-    if (row.dataset.type === "partition") return event.preventDefault();
+    if (row.dataset.type === "partition") {
+      const entry = pane.entries.find(item => item.partition === Number(row.dataset.partition));
+      const source = { image: pane.image.id, partition: Number(row.dataset.partition), name: entry?.name || row.dataset.name };
+      activeDrag = { kind: "partition", source };
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("text/plain", source.name);
+      return;
+    }
     if (!selectionKeys(pane).includes(row.dataset.key)) {
       setSelection(pane, [row.dataset.key], row.dataset.key);
       document.querySelectorAll(`.pane[data-pane="${index}"] .file-row`).forEach(item => {
@@ -1208,13 +1237,14 @@ function wireRow(row, index) {
       item.classList.add("dragging");
     });
     event.dataTransfer.effectAllowed = "copyMove";
+    activeDrag = { kind: "files", sources };
     event.dataTransfer.setData("application/x-amiga-files", JSON.stringify(sources));
     event.dataTransfer.setData("application/x-amiga-file", JSON.stringify(sources[0]));
     event.dataTransfer.setData("text/plain", sources.length === 1 ? sources[0].name : `${sources.length} Amiga files`);
   };
   if (panes[index].image.kind === "rom") {
     row.ondragover = event => {
-      if (!event.dataTransfer.types.includes("application/x-amiga-files") && !event.dataTransfer.types.includes("Files")) return;
+      if (!draggingFiles(event) && !event.dataTransfer.types.includes("Files")) return;
       event.preventDefault();
       event.stopPropagation();
       row.classList.add("folder-drop-target");
@@ -1224,8 +1254,8 @@ function wireRow(row, index) {
       event.preventDefault();
       event.stopPropagation();
       row.classList.remove("folder-drop-target");
-      const encoded = event.dataTransfer.getData("application/x-amiga-files");
-      if (encoded) return transferFiles(index, JSON.parse(encoded), `bank:${row.dataset.bank}`);
+      const internal = draggedFiles(event);
+      if (internal) return transferFiles(index, internal, `bank:${row.dataset.bank}`);
       const dropped = await collectDroppedHostFiles(event.dataTransfer);
       const files = dropped.map(item => item.file);
       if (files.length) return addRomHostFiles(index, files, Number(row.dataset.bank));
@@ -1235,7 +1265,7 @@ function wireRow(row, index) {
     && row.dataset.type === "dir"
   ) {
     row.ondragover = event => {
-      if (!event.dataTransfer.types.includes("application/x-amiga-files")) return;
+      if (!draggingFiles(event) && activeDrag?.kind !== "partition") return;
       event.preventDefault();
       event.stopPropagation();
       row.classList.add("folder-drop-target");
@@ -1246,19 +1276,37 @@ function wireRow(row, index) {
       }
     };
     row.ondrop = event => {
-      const encoded = event.dataTransfer.getData("application/x-amiga-files");
-      if (!encoded) return;
+      const partition = activeDrag?.kind === "partition" ? activeDrag.source : null;
+      const internal = partition ? null : draggedFiles(event);
+      if (!partition && !internal) return;
       event.preventDefault();
       event.stopPropagation();
       row.classList.remove("folder-drop-target");
-      transferFiles(
-        index,
-        JSON.parse(encoded),
-        fullPath(panes[index].path, row.dataset.name),
-      );
+      const destination = fullPath(panes[index].path, row.dataset.name);
+      if (partition) return copyPartitionInto(index, partition, { destination });
+      transferFiles(index, internal, destination);
+    };
+  } else if (row.dataset.type === "partition") {
+    // A partition dropped on a partition of another drive is copied into it.
+    row.ondragover = event => {
+      if (activeDrag?.kind !== "partition") return;
+      event.preventDefault();
+      event.stopPropagation();
+      row.classList.add("folder-drop-target");
+    };
+    row.ondragleave = event => {
+      if (!row.contains(event.relatedTarget)) row.classList.remove("folder-drop-target");
+    };
+    row.ondrop = event => {
+      if (activeDrag?.kind !== "partition") return;
+      event.preventDefault();
+      event.stopPropagation();
+      row.classList.remove("folder-drop-target");
+      copyPartitionInto(index, activeDrag.source, { partition: Number(row.dataset.partition) });
     };
   }
   row.ondragend = () => {
+    activeDrag = null;
     document.querySelectorAll(`.pane[data-pane="${index}"] .file-row.dragging`).forEach(item => {
       item.classList.remove("dragging");
     });
@@ -1320,18 +1368,23 @@ function wireDropZone(host, index) {
     if (panes[index].loading || panes[index].actionPending) {
       return toast("Wait for the current operation to finish.", true);
     }
+    if (activeDrag?.kind === "partition") {
+      const source = activeDrag.source;
+      if (!paneHoldsVolume(panes[index])) {
+        return toast("Drop the partition onto one of this drive's partitions, or open one first.", true);
+      }
+      return copyPartitionInto(index, source, {});
+    }
     const openDisk = event.dataTransfer.getData("application/x-amiga-disk");
-    const diskSource = openDisk ? JSON.parse(openDisk) : null;
+    const diskSource = activeDrag?.kind === "disk" ? activeDrag.source : openDisk ? JSON.parse(openDisk) : null;
     if (diskSource && paneHoldsVolume(panes[index])) {
       if (diskSource.image === panes[index].image.id) {
         return toast("Choose a different FFS image as the destination.", true);
       }
       return copyDiskImageToFfs(index, diskSource);
     }
-    const internalBatch = event.dataTransfer.getData("application/x-amiga-files");
-    if (internalBatch) return transferFiles(index, JSON.parse(internalBatch));
-    const internal = event.dataTransfer.getData("application/x-amiga-file");
-    if (internal) return transferFiles(index, [JSON.parse(internal)]);
+    const internal = draggedFiles(event);
+    if (internal) return transferFiles(index, internal);
     const dropped = await collectDroppedHostFiles(event.dataTransfer);
     const files = dropped.map(item => item.file);
     if (!files.length) return;
@@ -1349,6 +1402,70 @@ function wireDropZone(host, index) {
     if (images.length) return openFiles(index, files);
     for (const file of files) await importHostFile(index, file);
   };
+}
+
+//: What is being dragged inside the page. WebKitGTK does not carry custom drag
+//: types between panes reliably: a selection of many files arrived as its
+//: first file alone. The page therefore keeps its own record for the length of
+//: the drag and reads the drag data only as a fallback.
+let activeDrag = null;
+
+function draggingFiles(event) {
+  return activeDrag?.kind === "files" || event.dataTransfer.types.includes("application/x-amiga-files");
+}
+
+function draggedFiles(event) {
+  if (activeDrag?.kind === "files") return activeDrag.sources;
+  const batch = event.dataTransfer.getData("application/x-amiga-files");
+  if (batch) return JSON.parse(batch);
+  const single = event.dataTransfer.getData("application/x-amiga-file");
+  return single ? [JSON.parse(single)] : null;
+}
+
+//: Copy everything in one partition into another volume: into a new drawer
+//: named after it, or straight into where it was dropped. ``partition`` opens
+//: that partition of the target drive first, for a drop on the drive's table.
+async function copyPartitionInto(index, source, { partition = null, destination = null } = {}) {
+  const target = panes[index];
+  if (partition !== null) {
+    const entry = target.entries.find(item => item.partition === partition);
+    target.partition = partition;
+    target.partitionName = entry?.name || "";
+    target.path = "";
+    await loadDirectory(index);
+  }
+  if (source.image === target.image.id && source.partition === target.partition) {
+    return toast("Choose a different partition to copy into.", true);
+  }
+  const into = destination ?? target.path ?? "";
+  const place = into ? into : `the root of ${target.partitionName || target.image.name}`;
+  const rule = targetNameRule(target, source.name);
+  showModal(`
+    <div class="modal-heading"><span class="modal-kicker">COPY PARTITION</span><h2>Copy ${esc(source.name)} into ${esc(target.partitionName || target.image.name)}</h2></div>
+    <p>Every file and drawer in ${esc(source.name)} is copied, keeping protection bits, comments and dates. ${esc(source.name)} itself is only read.</p>
+    <div class="drive-choices">
+      <label class="check-field drive-choice"><input type="radio" name="mode" value="drawer" checked><span><b>Into a new drawer</b><small>Keeps the copy apart from what is already there.</small></span></label>
+      <label class="check-field drive-choice"><input type="radio" name="mode" value="merge"><span><b>Straight into ${esc(place)}</b><small>Refused before anything is written if a file would be replaced.</small></span></label>
+    </div>
+    <div class="field"><label>New drawer name</label><input name="drawer" maxlength="${rule.limit}" value="${esc(rule.suggested)}"></div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="copy">Copy partition</button></div>`,
+  async form => {
+    const drawer = String(form.get("drawer") || "").trim();
+    const merge = form.get("mode") === "merge";
+    if (!merge && !drawer) throw new Error("Give the new drawer a name.");
+    const targetPath = merge ? into : fullPath(into, drawer);
+    await trackedPaneOperation(index, `Copying ${source.name}…`, operationId => api("/api/transfer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourceImage: source.image, sourcePartition: source.partition, sourcePath: "",
+        targetImage: target.image.id, targetPartition: target.partition, targetPath,
+        recursive: true, operationId,
+      }),
+    }).then(data => { target.image = data.image; }));
+    await loadDirectory(index);
+    toast(`${source.name} copied into ${merge ? place : targetPath}`);
+  });
 }
 
 async function copyDiskImageToFfs(index, source) {
@@ -2393,9 +2510,11 @@ function renameSelected(index) {
   if (!entry) return;
   const isRom = pane.image.kind === "rom";
   const oldPath = entryImagePath(pane, entry);
-  // An AmigaDOS directory entry holds up to 30 characters, whatever the DOS
-  // type is; a ROM header has its own limit.
-  const nameLimit = isRom ? Number(entry.header?.titleCapacity || 24) : 30;
+  // A name may be as long as the volume allows: 30 characters on FFS, more
+  // on SFS, PFS3 and the long-filename variants. A ROM header has its own limit.
+  const nameLimit = isRom
+    ? Number(entry.header?.titleCapacity || 24)
+    : targetNameRule(pane, entry.leafName || entry.name).limit;
   showModal(`
     <h2>${isRom ? `Edit ROM bank ${entry.bank} title` : `Rename ${esc(entry.name)}`}</h2>
     <p>${isRom ? "This changes the name in the recognised ROM header. The code and bank position stay unchanged." : "The item stays in its current directory. Drag it onto another directory to move it."}</p>
@@ -4427,48 +4546,42 @@ async function refreshSharedFfsPanes(imageId, image, moves = [], deleted = null)
 async function performTransfers(targetIndex, transfers, destination = null) {
   const target = panes[targetIndex];
   const targetDirectory = destination || target.path;
-  setLoading(targetIndex, true, transfers.length === 1 ? "Copying between images…" : `Copying 1 of ${transfers.length}…`);
+  const opening = transfers.length === 1 ? `Copying ${transfers[0].name}…` : `Copying ${transfers.length} items…`;
   try {
-    for (const [index, transfer] of transfers.entries()) {
-      target.loadingMessage = transfers.length === 1
-        ? `Copying ${transfer.name}…`
-        : `Copying ${index + 1} of ${transfers.length}: ${transfer.name}…`;
-      target.progressCurrent = index;
-      target.progressTotal = transfers.length;
-      renderPane(targetIndex);
-      const romStart = target.image.kind === "rom" && String(targetDirectory).startsWith("bank:")
-        ? Number(String(targetDirectory).slice(5))
-        : null;
-      const targetPath = target.image.kind === "rom"
-        ? (romStart == null ? "$" : `bank:${romStart + index}`)
-        : target.image.kind === "kickfs"
-          ? transfer.targetName
-          : fullPath(targetDirectory, transfer.targetName);
-      const data = await api("/api/transfer", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceImage: transfer.image, sourcePartition: transfer.partition, sourcePath: transfer.path,
-          sourceSide: transfer.side,
-          targetImage: target.image.id, targetPartition: target.partition, targetSide: target.side,
-          targetPath,
-          recursive: transfer.recursive
-        })
-      });
-      target.image = data.image;
-      target.progressCurrent = index + 1;
-    }
-    target.progressCurrent = null;
-    target.progressTotal = null;
+    // One tracked operation covers the whole drop, so the pane shows each
+    // file as it is written and the copy can be stopped from Jobs; a drawer
+    // from a hard drive can hold thousands of files.
+    await trackedPaneOperation(targetIndex, opening, async operationId => {
+      for (const [index, transfer] of transfers.entries()) {
+        const romStart = target.image.kind === "rom" && String(targetDirectory).startsWith("bank:")
+          ? Number(String(targetDirectory).slice(5))
+          : null;
+        const targetPath = target.image.kind === "rom"
+          ? (romStart == null ? "$" : `bank:${romStart + index}`)
+          : target.image.kind === "kickfs"
+            ? transfer.targetName
+            : fullPath(targetDirectory, transfer.targetName);
+        const data = await api("/api/transfer", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceImage: transfer.image, sourcePartition: transfer.partition, sourcePath: transfer.path,
+            sourceSide: transfer.side,
+            targetImage: target.image.id, targetPartition: target.partition, targetSide: target.side,
+            targetPath,
+            recursive: transfer.recursive,
+            operationId,
+          })
+        });
+        target.image = data.image;
+      }
+    });
     await loadDirectory(targetIndex);
     toast(transfers.length === 1
       ? `${transfers[0].name} copied as ${transfers[0].targetName}`
       : `${transfers.length} items copied`);
     return true;
   } catch (error) {
-    target.loading = false;
-    target.progressCurrent = null;
-    target.progressTotal = null;
-    renderPane(targetIndex);
+    await loadDirectory(targetIndex).catch(() => {});
     toast(error.message, true);
     return false;
   }
@@ -4616,6 +4729,225 @@ function exportImageAs(index) {
       return { image: pane.image };
     });
     toast(`Export to ${entry?.label || format} complete.`);
+  });
+}
+
+//: A drive attached through USB is opened where it is rather than copied,
+//: so the list says plainly why a drive cannot be opened instead of leaving
+//: it out: no access yet, mounted by Linux, or nothing Amiga on it.
+function attachedDriveState(drive) {
+  if (!drive.readable) return drive.detail;
+  if (drive.mounted.length) return `Linux has it mounted at ${drive.mounted.join(", ")}. Unmount it first.`;
+  if (!drive.amiga) return "No Amiga partition table or volume was found on it.";
+  return drive.readOnlySwitch ? "Its write-protect switch is on, so it can only be read." : "";
+}
+
+async function chooseAttachedDrive(index) {
+  const data = await api("/api/desktop/attached-drives");
+  const openDevices = new Set(panes.map(pane => pane.image?.attachedDrive?.device).filter(Boolean));
+  const drives = data.drives.map(drive => ({
+    ...drive,
+    blocked: attachedDriveState(drive),
+    alreadyOpen: openDevices.has(drive.stablePath),
+  }));
+  const firstUsable = drives.findIndex(drive => drive.readable && !drive.mounted.length && drive.amiga && !drive.alreadyOpen);
+  const rows = drives.map((drive, position) => {
+    const usable = drive.readable && !drive.mounted.length && drive.amiga && !drive.alreadyOpen;
+    const note = drive.alreadyOpen ? "Already open in another pane." : drive.blocked;
+    return `<label class="check-field drive-choice">
+      <input type="radio" name="driveId" value="${esc(drive.id)}"${usable ? "" : " disabled"}${position === firstUsable ? " checked" : ""}>
+      <span><b>${esc(drive.model)} · ${esc(humanSize(drive.size))}</b>
+      <small>${esc(drive.contents || "Contents unknown")} · ${esc(drive.device)}</small>
+      ${note ? `<small class="drive-choice-note">${esc(note)}</small>` : ""}</span>
+    </label>`;
+  }).join("");
+  const ruleNote = data.accessRule.installed ? "" : `<div class="help-note">Linux gives whole drives to the administrator only. The <code>${esc(data.accessRule.name)}</code> rule that comes with Amiga File Forge lets the person at the desktop open USB drives. The handbook explains how to install it.</div>`;
+  showModal(`
+    <h2>Open attached drive</h2>
+    <p>A hard drive or memory card from an Amiga, attached through a USB adapter, is opened where it is rather than copied. It opens read-only. Changes can be allowed from the pane's File menu, and then go straight to the drive with no undo.</p>
+    ${rows ? `<div class="drive-choices">${rows}</div>` : '<div class="help-note">No drive attached through USB was found. Attach one and open this list again.</div>'}
+    ${ruleNote}
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="open" ${firstUsable < 0 ? "disabled" : ""}>Open drive</button></div>`,
+  async form => {
+    const opened = await api("/api/desktop/attached-drives/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: form.get("driveId") }),
+    });
+    await acceptImage(index, opened.image);
+    toast(`${opened.image.name} opened read-only`);
+  });
+}
+
+async function setDriveWrites(index, allowed) {
+  const pane = panes[index];
+  if (allowed && !await confirmChoice(
+    "Allow writes to this drive?",
+    "Changes will go straight to the drive. There is no undo and no saved copy to fall back on.",
+    { confirmLabel: "Allow writes", danger: true, note: "Close any other program using the drive first, and do not unplug it while a change is running." },
+  )) return;
+  const data = await api(`/api/desktop/images/${pane.image.id}/drive-writes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ allowed }),
+  });
+  pane.image = data.image;
+  renderPane(index, true);
+  toast(allowed ? "Writes to the drive allowed" : "Drive is read-only again");
+}
+
+//: Save dialogs the native host is showing, by request, until it answers.
+const pendingSavePaths = new Map();
+
+function nativeSavePath(folder, name, title) {
+  const bridge = window.webkit?.messageHandlers?.amigaDesktop;
+  if (!bridge) return Promise.resolve(undefined);
+  const requestId = crypto.randomUUID();
+  return new Promise(resolve => {
+    pendingSavePaths.set(requestId, resolve);
+    bridge.postMessage(JSON.stringify({ command: "choose-save-path", requestId, folder, name, title }));
+  });
+}
+
+function splitHostPath(path) {
+  const text = String(path || "");
+  const cut = text.lastIndexOf("/");
+  return cut < 0 ? { folder: "", name: text } : { folder: text.slice(0, cut) || "/", name: text.slice(cut + 1) };
+}
+
+//: A drive is copied out by the server straight to a file on this machine,
+//: because a drive of many gigabytes cannot pass through the page the way an
+//: ordinary export does. The page only chooses the shape and the file.
+async function exportAttachedDrive(index) {
+  const pane = panes[index];
+  const options = await api(`/api/desktop/images/${pane.image.id}/drive-export`);
+  const scopes = options.scopes || [];
+  if (!scopes.length) throw new Error("This drive offers nothing to export.");
+  const fileNameFor = scope => {
+    const partition = /^Partition (\S+)/.exec(scope.label);
+    return `${options.stem}${scope.scope.startsWith("partition:") && partition ? `-${partition[1]}` : ""}${scope.suffix}`;
+  };
+  const rows = scopes.map((scope, position) => `<label class="check-field drive-choice">
+      <input type="radio" name="scope" value="${esc(scope.scope)}"${position === 0 ? " checked" : ""}>
+      <span><b>${esc(scope.label)}</b><small>${esc(humanSize(scope.bytes))}</small></span>
+    </label>`).join("");
+  const hasNativeDialog = Boolean(window.webkit?.messageHandlers?.amigaDesktop);
+  showModal(`
+    <div class="modal-heading"><span class="modal-kicker">EXPORT DRIVE</span><h2>Save ${esc(pane.image.name)} as an image file</h2></div>
+    <p>The drive is read from start to finish and written to the file you choose. Nothing on the drive changes, and changes to it wait until the copy is done.</p>
+    <div class="drive-choices">${rows}</div>
+    <div class="field"><label>Save as</label>
+      <div class="path-field"><input name="destination" required spellcheck="false" value="${esc(`${options.folder}/${fileNameFor(scopes[0])}`)}">
+      ${hasNativeDialog ? '<button type="button" class="button ghost choose-destination">Choose…</button>' : ""}</div>
+      <small>A partition on its own is saved with a .geo file of the same name beside it, which holds its geometry.</small></div>
+    <div class="help-note">Space the drive leaves empty is not written, so on most Linux filing systems the file takes only the room its contents need. A large drive takes several minutes to copy; the copy can be stopped, and a stopped copy leaves no file behind.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="export">Export</button></div>`,
+  async form => {
+    const scope = String(form.get("scope") || "");
+    const destination = String(form.get("destination") || "").trim();
+    const data = await trackedPaneOperation(index, `Copying ${pane.image.name} to an image file…`, operationId =>
+      api(`/api/desktop/images/${pane.image.id}/drive-export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, destination, operationId }),
+      }), { abortMode: "read-only" });
+    const saved = data.result;
+    toast(`Saved ${saved.path}${saved.geometry ? " and its .geo" : ""}`);
+  });
+  const destinationInput = modalContent.querySelector('[name="destination"]');
+  modalContent.querySelectorAll('[name="scope"]').forEach(input => {
+    input.addEventListener("change", () => {
+      const scope = scopes.find(entry => entry.scope === input.value);
+      const { folder } = splitHostPath(destinationInput.value);
+      destinationInput.value = `${folder || options.folder}/${fileNameFor(scope)}`;
+    });
+  });
+  modalContent.querySelector(".choose-destination")?.addEventListener("click", async () => {
+    const { folder, name } = splitHostPath(destinationInput.value);
+    const chosen = await nativeSavePath(folder || options.folder, name, "Save the drive as an image file");
+    if (chosen) destinationInput.value = chosen;
+  });
+}
+
+//: Copying onto another drive erases it, so the server decides which drives
+//: can take the copy and says why the others cannot; the page only lists them
+//: and asks for the choice to be confirmed by name.
+async function cloneAttachedDrive(index) {
+  const pane = panes[index];
+  let options = await api(`/api/desktop/images/${pane.image.id}/drive-clone`);
+  const scopes = options.scopes || [];
+  if (!scopes.length) throw new Error("This drive offers nothing to copy.");
+  const scopeRows = scopes.map((scope, position) => `<label class="check-field drive-choice">
+      <input type="radio" name="scope" value="${esc(scope.scope)}"${position === 0 ? " checked" : ""}>
+      <span><b>${esc(scope.label)}</b><small>${esc(humanSize(scope.bytes))}</small></span>
+    </label>`).join("");
+  const targetRows = () => {
+    const scope = modalContent.querySelector('[name="scope"]:checked')?.value || scopes[0].scope;
+    const rows = options.targets.map(drive => {
+      const problem = drive.problems?.[scope] || "";
+      return `<label class="check-field drive-choice">
+        <input type="radio" name="target" value="${esc(drive.id)}"${problem ? " disabled" : ""}>
+        <span><b>${esc(drive.model)} · ${esc(humanSize(drive.size))}</b>
+        <small>${esc(drive.contents || "Contents unknown")} · ${esc(drive.device)}</small>
+        ${problem ? `<small class="drive-choice-note">${esc(problem)}</small>` : ""}</span>
+      </label>`;
+    }).join("");
+    if (!rows) return '<div class="help-note">No other drive is attached through USB. Attach the drive to copy onto, then choose Refresh.</div>';
+    const usable = options.targets.some(drive => !drive.problems?.[scope]);
+    return usable ? rows : `${rows}<div class="help-note">None of these drives can take the copy yet. Deal with what each one says, then choose Refresh.</div>`;
+  };
+  const updateTargets = () => {
+    const list = modalContent.querySelector(".clone-targets");
+    const chosen = list.querySelector('[name="target"]:checked')?.value;
+    list.innerHTML = targetRows();
+    const keep = chosen && list.querySelector(`[name="target"][value="${CSS.escape(chosen)}"]:not(:disabled)`);
+    if (keep) keep.checked = true;
+    modalContent.querySelector('button[value="clone"]').disabled = !list.querySelector('[name="target"]:checked');
+    list.querySelectorAll('[name="target"]').forEach(input => input.addEventListener("change", () => {
+      modalContent.querySelector('button[value="clone"]').disabled = false;
+    }));
+  };
+  showModal(`
+    <div class="modal-heading"><span class="modal-kicker">COPY DRIVE</span><h2>Copy ${esc(pane.image.name)} onto another drive</h2></div>
+    <p>Everything on the drive you choose is erased and replaced with a copy of this one, which is then read back and checked. This drive is only read.</p>
+    <div class="drive-choices">${scopeRows}</div>
+    <div class="clone-targets-heading"><strong>Drive to erase and copy onto</strong><button type="button" class="button ghost refresh-clone-targets">Refresh</button></div>
+    <div class="drive-choices clone-targets"></div>
+    <div class="help-note">Every byte is written, so a large drive takes a while: about ten minutes for 128 GB over USB 3. Stopping part way leaves the other drive incomplete.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button danger" value="clone" disabled>Erase and copy</button></div>`,
+  async form => {
+    const scope = String(form.get("scope") || "");
+    const targetId = String(form.get("target") || "");
+    const target = options.targets.find(drive => drive.id === targetId);
+    if (!target) throw new Error("Choose the drive to copy onto.");
+    const chosenScope = scopes.find(entry => entry.scope === scope);
+    const confirmed = await confirmChoice(
+      `Erase ${target.model}?`,
+      `Everything on ${target.model} (${humanSize(target.size)}, ${target.device}) will be replaced with ${humanSize(chosenScope?.bytes || 0)} copied from ${pane.image.name}. This cannot be undone.`,
+      { confirmLabel: `Erase ${target.model}`, danger: true, note: target.contents ? `It currently holds: ${target.contents}.` : "" },
+    );
+    if (!confirmed) return false;
+    const data = await trackedPaneOperation(index, `Copying ${pane.image.name} onto ${target.model}…`, operationId =>
+      api(`/api/desktop/images/${pane.image.id}/drive-clone`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, target: targetId, confirm: targetId, operationId }),
+      }), { abortMode: "clone" });
+    toast(`${data.result.target} now holds a verified copy`);
+  });
+  updateTargets();
+  modalContent.querySelectorAll('[name="scope"]').forEach(input => input.addEventListener("change", updateTargets));
+  const refresh = modalContent.querySelector(".refresh-clone-targets");
+  refresh.addEventListener("click", async () => {
+    refresh.disabled = true;
+    try {
+      options = await api(`/api/desktop/images/${pane.image.id}/drive-clone`);
+      updateTargets();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      refresh.disabled = false;
+    }
   });
 }
 
@@ -8602,6 +8934,11 @@ updateThemeButton();
 updateAddPaneButton();
 
 window.AmigaDesktopHost = Object.freeze({
+  savePathChosen(requestId, path) {
+    const resolve = pendingSavePaths.get(String(requestId));
+    pendingSavePaths.delete(String(requestId));
+    resolve?.(typeof path === "string" && path ? path : null);
+  },
   paneAtPoint(x, y) {
     const host = document.elementFromPoint(Number(x), Number(y))?.closest?.(".pane");
     const index = Number(host?.dataset?.pane);

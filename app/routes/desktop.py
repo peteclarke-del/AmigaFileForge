@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
+import os
 import tempfile
 
 from flask import Blueprint, jsonify
@@ -26,7 +27,10 @@ from amiga_greaseweazle import (
 )
 
 from ..app_update import Activity
+from ..attached_drives import UDEV_RULE_NAME, find_attached_drive, list_attached_drives
 from ..disk_service import DiskError, DiskService
+from ..drive_clone import clone_drive, clone_scopes, target_problem
+from ..drive_export import export_drive, export_scopes
 from ..desktop_state import DesktopClientState
 from ..image_opening import open_image_path, open_rom_component_paths
 from ..operations import OperationRegistry
@@ -226,6 +230,159 @@ def create_desktop_blueprint(
             force_kind=str(data.get("forceKind") or "") or None,
         )
         return jsonify(image=service.summary(session))
+
+    @blueprint.get("/api/desktop/attached-drives")
+    @request_effect("read-only", "listing drives attached through USB")
+    def attached_drives():
+        """List USB drives, with what each holds and whether it can be opened."""
+        rule = Path("/etc/udev/rules.d") / UDEV_RULE_NAME
+        return jsonify(
+            drives=[drive.to_dict() for drive in list_attached_drives()],
+            accessRule={
+                "name": UDEV_RULE_NAME,
+                "installed": rule.is_file() or (Path("/usr/lib/udev/rules.d") / UDEV_RULE_NAME).is_file(),
+            },
+        )
+
+    @blueprint.post("/api/desktop/attached-drives/open")
+    @request_effect("lifecycle", "opening an attached drive in place")
+    def open_attached_drive():
+        data = payload()
+        try:
+            drive = find_attached_drive(data.get("id"))
+        except LookupError as exc:
+            raise DiskError(str(exc)) from exc
+        if not drive.readable:
+            raise DiskError(drive.detail)
+        if drive.mounted:
+            raise DiskError(
+                f"Linux is using this drive (mounted at {', '.join(drive.mounted)}). "
+                "Unmount it before opening it here."
+            )
+        if not drive.amiga:
+            raise DiskError("This drive holds no Amiga partition table or volume.")
+        session = service.open_attached_drive(drive.stable_path, drive.model)
+        return jsonify(image=service.summary(session))
+
+    @blueprint.post("/api/desktop/images/<image_id>/drive-writes")
+    @request_effect("lifecycle", "allowing or stopping writes to an attached drive")
+    def drive_writes(image_id):
+        session = service.get(image_id)
+        service.allow_drive_writes(session, bool(payload().get("allowed")))
+        return jsonify(image=service.summary(session))
+
+    def _open_drive(image_id: str):
+        session = service.get(image_id)
+        if not session.attached_device:
+            raise DiskError("Only a drive opened in place is exported this way.")
+        if not Path(session.attached_device).exists():
+            raise DiskError("The drive is no longer attached.")
+        return session
+
+    @blueprint.get("/api/desktop/images/<image_id>/drive-export")
+    def drive_export_options(image_id):
+        """Offer the shapes an attached drive can be copied out in."""
+        session = _open_drive(image_id)
+        try:
+            scopes = export_scopes(session.attached_device, session.kind == "hdf")
+        except OSError as exc:
+            raise DiskError(f"The drive could not be read: {exc.strerror or exc}.") from exc
+        stem = Path(DiskService.safe_filename(session.name)).stem or "drive"
+        return jsonify(
+            scopes=[scope.to_dict() for scope in scopes],
+            folder=str(Path.home()),
+            stem=stem,
+        )
+
+    @blueprint.post("/api/desktop/images/<image_id>/drive-export")
+    @request_effect("read-only", "copying an attached drive to an image file")
+    @media_activity.guard
+    def export_attached_drive(image_id):
+        """Copy an attached drive, or one partition of it, to a host file.
+
+        The pane's lock is held for the whole copy, so no change can reach the
+        drive half way through and leave the file describing neither state.
+        """
+        session = _open_drive(image_id)
+        data = payload()
+        operation_id = str(data.get("operationId") or "") or None
+        with operations.tracked(
+            operation_id,
+            f"Copying {session.name} to an image file",
+            "The drive has been saved as an image file",
+        ) as progress:
+            with session.lock:
+                result = export_drive(
+                    session.attached_device,
+                    session.kind == "hdf",
+                    str(data.get("scope") or ""),
+                    str(data.get("destination") or ""),
+                    progress,
+                )
+        return jsonify(result=result)
+
+    def _open_devices() -> set[str]:
+        return {
+            os.path.realpath(session.attached_device)
+            for session in list(service.sessions.values())
+            if session.attached_device
+        }
+
+    @blueprint.get("/api/desktop/images/<image_id>/drive-clone")
+    def drive_clone_options(image_id):
+        """Offer the drives this one could be copied onto, and why not if not."""
+        session = _open_drive(image_id)
+        try:
+            scopes = clone_scopes(session.attached_device, session.kind == "hdf")
+        except OSError as exc:
+            raise DiskError(f"The drive could not be read: {exc.strerror or exc}.") from exc
+        open_devices = _open_devices()
+        targets = []
+        for drive in list_attached_drives():
+            row = drive.to_dict()
+            row["problems"] = {
+                scope.scope: target_problem(
+                    drive, session.attached_device, scope.length, open_devices
+                )
+                for scope in scopes
+            }
+            targets.append(row)
+        return jsonify(scopes=[scope.to_dict() for scope in scopes], targets=targets)
+
+    @blueprint.post("/api/desktop/images/<image_id>/drive-clone")
+    @request_effect("external", "writing a copy of a drive over another drive")
+    @media_activity.guard
+    def clone_attached_drive(image_id):
+        """Copy an attached drive onto another one, erasing it, and verify it.
+
+        The request has to name the target twice, once to choose it and once
+        to confirm it, so a stray or replayed request cannot erase a drive.
+        """
+        session = _open_drive(image_id)
+        data = payload()
+        wanted = str(data.get("target") or "")
+        if not wanted or str(data.get("confirm") or "") != wanted:
+            raise DiskError("Confirm which drive is to be erased before copying onto it.")
+        try:
+            target = find_attached_drive(wanted)
+        except LookupError as exc:
+            raise DiskError(str(exc)) from exc
+        operation_id = str(data.get("operationId") or "") or None
+        with operations.tracked(
+            operation_id,
+            f"Copying {session.name} onto {target.model}",
+            f"{target.model} now holds a verified copy",
+        ) as progress:
+            with session.lock:
+                result = clone_drive(
+                    session.attached_device,
+                    session.kind == "hdf",
+                    str(data.get("scope") or ""),
+                    target,
+                    _open_devices(),
+                    progress,
+                )
+        return jsonify(result=result)
 
     @blueprint.get("/api/desktop/images/<image_id>/physical-floppy")
     @request_effect("external", "probing Greaseweazle physical-floppy access")

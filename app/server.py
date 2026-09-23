@@ -47,6 +47,30 @@ SECURITY_HEADERS = {
 }
 
 
+#: Requests that act on an image as a whole file, refused for a live drive.
+DRIVE_UNAVAILABLE = frozenset({
+    "images.create_image_checkpoint",
+    "images.restore_image_checkpoint",
+    "images.undo_image_change",
+    "images.download_image",
+    "images.prepare_image_download",
+    "images.convert_image",
+    "images.export_image",
+    "images.compact",
+    "hex_editor.read_hex",
+    "hex_editor.search_hex",
+    "hex_editor.write_hex",
+    "hex_editor.compare_hex",
+    "rom_tools.rom_hardware_export",
+    # Each of these copies the whole drive into a private snapshot first.
+    "tools.package_deployment",
+    "tools.create_workflow_recipe",
+    "tools.editor_emulator_run",
+    "tools.editor_debugger_run",
+    "tools.install_under_emulation",
+})
+
+
 def create_app(
     *,
     work_dir: Path | str | None = None,
@@ -112,6 +136,28 @@ def create_app(
         g.session_owner_id = owner_id
 
     @application.before_request
+    def refuse_whole_image_operations_on_drives():
+        """Turn away what only makes sense for an image file, on a live drive.
+
+        A drive opened in place is not a file to download, convert, compact
+        or roll back: copying a whole drive for any of those is the very thing
+        opening it in place avoids.
+        """
+        if request.endpoint not in DRIVE_UNAVAILABLE:
+            return None
+        image_id = request.view_args.get("image_id") if request.view_args else None
+        try:
+            session = service.get(str(image_id)) if image_id else None
+        except DiskError:
+            return None
+        if session is None or not session.attached_device:
+            return None
+        return jsonify(error=(
+            "That works on an image file, not on a drive opened in place. Copy "
+            "the files you need to an image in another pane instead."
+        )), 400
+
+    @application.before_request
     def checkpoint_image_mutation():
         """Create one undo point for every image-changing API request."""
         mutation = mutation_for(application.view_functions.get(request.endpoint))
@@ -124,6 +170,20 @@ def create_app(
         if not image_id:
             return None
         session = service.get(str(image_id))
+        if session.attached_device:
+            # A drive opened in place has no undo: each checkpoint would be a
+            # copy of the whole drive. Changes wait until writes are allowed.
+            if not session.device_writes:
+                return jsonify(error=(
+                    "This drive is open read-only. Choose Allow writes on the "
+                    "pane first; changes then go straight to the drive and "
+                    "cannot be undone."
+                )), 409
+            # Advanced before the change rather than after it, so the summary
+            # this request returns already carries the new revision, and a
+            # request that fails part way still makes every pane look again.
+            session.device_revision += 1
+            return None
         g.undo_checkpoint_session = session
         g.undo_checkpoint_token = service.begin_automatic_checkpoint(
             session, mutation.reason

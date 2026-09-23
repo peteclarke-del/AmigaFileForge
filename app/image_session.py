@@ -55,6 +55,15 @@ class ImageSession:
     editor_projects: dict[str, dict] = field(default_factory=dict)
     compatibility_reports: list[dict] = field(default_factory=list)
     content_kind_cache: dict[tuple, str] = field(default_factory=dict)
+    #: The stable /dev/disk/by-id path of a drive opened in place, rather
+    #: than a working copy. Such a session is read-only until the user allows
+    #: writes, and has no checkpoints, because copying a whole drive before
+    #: each change is not possible.
+    attached_device: str | None = None
+    device_writes: bool = False
+    #: Advanced after each change to an attached drive, whose device node
+    #: does not reliably record a modification time.
+    device_revision: int = 0
     owner_id: str | None = field(default_factory=lambda: SESSION_OWNER.get())
     lock: threading.RLock = field(default_factory=threading.RLock)
 

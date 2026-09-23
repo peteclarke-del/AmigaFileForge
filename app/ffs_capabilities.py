@@ -43,11 +43,28 @@ def capabilities_from_mount(mount) -> FFSCapabilities:
     if volume is None:
         raise TypeError("The mounted filesystem is not an AmigaDOS volume.")
 
+    if not hasattr(volume, "ffs"):
+        # SFS and PFS3 share nothing with FFS below the directory level: they
+        # keep their own allocation maps and directory blocks, and each one
+        # records how long a name it accepts.
+        return FFSCapabilities(
+            format=volume.format,
+            map=volume.format.lower(),
+            directories=volume.format.lower(),
+            name_limit=int(getattr(volume, "name_limit", STANDARD_NAME_LIMIT)),
+            directory_entry_limit=None,
+        )
     return FFSCapabilities(
         format=volume.format,
         map="ffs" if volume.ffs else "ofs",
         directories="dircache" if volume.dircache else "hashed",
-        name_limit=LONG_NAME_LIMIT if "LNFS" in volume.format else STANDARD_NAME_LIMIT,
+        name_limit=int(
+            getattr(
+                volume,
+                "name_limit",
+                LONG_NAME_LIMIT if "LNFS" in volume.format else STANDARD_NAME_LIMIT,
+            )
+        ),
         directory_entry_limit=None,
     )
 
