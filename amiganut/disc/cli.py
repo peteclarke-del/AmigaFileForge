@@ -91,8 +91,16 @@ def _in_global_storage_order(source_mount, items: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Copy descriptors
 # ---------------------------------------------------------------------------
-def _file_item(source_mount, source_path: str, destination: str) -> dict:
-    """Build one copy descriptor, carrying the source's catalogue metadata."""
+def _file_item(
+    source_mount, source_path: str, destination: str, *, load_data: bool = True
+) -> dict:
+    """Build one copy descriptor, carrying the source's catalogue metadata.
+
+    With ``load_data`` false the descriptor carries the file's size instead of
+    its bytes, and the writer reads them when it reaches the file. A tree from
+    a hard-drive partition can hold gigabytes, which must not all be held in
+    memory before the first file is written.
+    """
     meta = (
         source_mount.amiga_meta(source_path)
         if hasattr(source_mount, "amiga_meta")
@@ -111,15 +119,18 @@ def _file_item(source_mount, source_path: str, destination: str) -> dict:
         except Exception:
             datestamp = None
     block = 0
+    size = None
     try:
-        block = int(source_mount.stat(source_path).block)
+        found = source_mount.stat(source_path)
+        block = int(found.block)
+        size = int(found.length)
     except Exception:
         block = 0
-    return {
+    item = {
         "kind": "file",
         "src": source_path,
         "dst": destination,
-        "data": source_mount.read_bytes(source_path),
+        "size": size,
         "load": int(meta.protection) & 0xFFFFFFFF,
         "exec": 0,
         "access": int(meta.protection) & 0xFFFFFFFF,
@@ -129,6 +140,10 @@ def _file_item(source_mount, source_path: str, destination: str) -> dict:
         "block": block,
         "sourceName": source_path,
     }
+    if load_data:
+        item["data"] = source_mount.read_bytes(source_path)
+        item["size"] = len(item["data"])
+    return item
 
 
 def _dir_item(destination: str, order: int) -> dict:
@@ -144,6 +159,7 @@ def _collect_copy_items(
     dst_slash: bool = False,
     recursive: bool = False,
     wildcards: bool = True,
+    load_data: bool = True,
 ) -> list[dict]:
     """Collect every copy descriptor for one source path or wildcard.
 
@@ -192,7 +208,9 @@ def _collect_copy_items(
         else:
             destination = dst_bare or name
         if not is_dir:
-            items.append(_file_item(source_mount, source_path, destination))
+            items.append(
+                _file_item(source_mount, source_path, destination, load_data=load_data)
+            )
             continue
         if not recursive:
             raise ConfigurationError(
@@ -216,7 +234,9 @@ def _collect_copy_items(
                     stack.append((entry.path, child_destination))
                 else:
                     items.append(
-                        _file_item(source_mount, entry.path, child_destination)
+                        _file_item(
+                            source_mount, entry.path, child_destination, load_data=load_data
+                        )
                     )
     return items
 
@@ -342,6 +362,8 @@ def _dos_type_for(name: str) -> bytes:
         "DOS3": b"DOS\x03",
         "DOS4": b"DOS\x04",
         "DOS5": b"DOS\x05",
+        "DOS6": b"DOS\x06",
+        "DOS7": b"DOS\x07",
     }
     if key in aliases:
         return aliases[key]
@@ -1007,7 +1029,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = add("create", command_create, "Create a new empty image.")
     sub.add_argument("--filesystem", default="ofs")
-    sub.add_argument("--variant", default=None, help="OFS, FFS, OFS-INTL, FFS-INTL, OFS-DC or FFS-DC.")
+    sub.add_argument("--variant", default=None, help="OFS, FFS, OFS-INTL, FFS-INTL, OFS-DC, FFS-DC, OFS-LNFS or FFS-LNFS.")
     sub.add_argument("--geometry", default="dd")
     sub.add_argument("--title", default="Empty")
     sub.add_argument("--partitions", type=int, default=1)

@@ -39,6 +39,8 @@ from .blocks import (
     BlockReader,
     Geometry,
 )
+from .pfs3 import PFS3Volume
+from .pfs3_blocks import PFS3_DOS_TYPES, ROOT_IDS as PFS3_ROOT_IDS
 from .sfs import SFS_ID, SFSVolume
 from .rdb import (
     Partition,
@@ -347,6 +349,13 @@ class SFSMount(AmigaDOSMount):
         super().__init__(volume, name)
 
 
+class PFS3Mount(AmigaDOSMount):
+    """The workbench-facing view of one mounted Professional File System volume."""
+
+    def __init__(self, volume: PFS3Volume, name: str = "pfs3"):
+        super().__init__(volume, name)
+
+
 class PathNode:
     """One place inside a mounted volume, whether or not it exists yet.
 
@@ -473,7 +482,7 @@ class AmigaDOSFilesystem:
         if not reader.total_blocks:
             return None
         signature = reader.read_block(0)[:4]
-        if signature[:3] not in (b"DOS", b"PFS"):
+        if signature[:3] != b"DOS":
             return None
         label = DOS_TYPES.get(signature)
         if label is None:
@@ -535,6 +544,28 @@ class SFSFilesystem:
             volume.blocks.close()
 
 
+class PFS3Filesystem:
+    """Registry entry for Professional File System volumes."""
+
+    name = "pfs3"
+    label = "Professional File System 3"
+
+    def open(self, reader: BlockReader, geometry: Geometry | None = None) -> PFS3Mount:
+        return PFS3Mount(PFS3Volume(reader), self.name)
+
+    def identify(self, reader: BlockReader) -> Candidate | None:
+        if not reader.total_blocks or reader.read_block(0)[:4] not in PFS3_ROOT_IDS:
+            return None
+        try:
+            volume = PFS3Volume(reader)
+        except DataError:
+            return Candidate(self.name, 0.5, "PFS3 boot block without a readable root")
+        try:
+            return Candidate(self.name, 1.0, f"PFS3 volume named {volume.title!r}")
+        finally:
+            volume.blocks.close()
+
+
 class RigidDiskFilesystem:
     """Registry entry for a partitioned hard-drive file."""
 
@@ -570,9 +601,16 @@ class KickstartFilesystem:
 
         return KickstartMount(reader)
 
+    #: A ROM has to fit the 68000's 24-bit address space, so anything larger is
+    #: not one. Checking first matters: the probe reads the whole input, and a
+    #: hard drive opened in place would otherwise be read into memory entire.
+    LARGEST_ROM = 0x1000000
+
     def identify(self, reader: BlockReader) -> Candidate | None:
         from ..kickfs.kickfs import KICKFS
 
+        if reader.length > self.LARGEST_ROM:
+            return None
         try:
             image = KICKFS.from_bytes(_whole_image(reader))
         except DataError:
@@ -617,6 +655,8 @@ class RigidDiskMount:
         )
         if partition.dos_type == SFS_ID:
             return SFSMount(SFSVolume(window))
+        if partition.dos_type in PFS3_DOS_TYPES:
+            return PFS3Mount(PFS3Volume(window))
         return AmigaDOSMount(AmigaDOSVolume(window, partition.geometry()))
 
     def to_dict(self) -> dict:
@@ -632,12 +672,13 @@ FILESYSTEMS = {
     "ffs": FFSFilesystem,
     "rdb": RigidDiskFilesystem,
     "sfs": SFSFilesystem,
+    "pfs3": PFS3Filesystem,
     "kickfs": KickstartFilesystem,
 }
 
 #: Identification order. The partition table is checked first because it wraps
 #: volumes that would otherwise be found at an offset.
-IDENTIFY_ORDER = ("rdb", "ffs", "ofs", "sfs", "kickfs")
+IDENTIFY_ORDER = ("rdb", "ffs", "ofs", "sfs", "pfs3", "kickfs")
 
 
 def create_filesystem(name: str):
@@ -664,12 +705,12 @@ SUFFIX_HINTS = {
     ".adf": ("ofs", "ffs"),
     ".adz": ("ofs", "ffs"),
     ".dsk": ("ofs", "ffs"),
-    ".hdf": ("rdb", "ffs", "ofs", "sfs"),
-    ".hda": ("ffs", "ofs", "rdb", "sfs"),
-    ".hdz": ("rdb", "ffs", "ofs", "sfs"),
+    ".hdf": ("rdb", "ffs", "ofs", "sfs", "pfs3"),
+    ".hda": ("ffs", "ofs", "rdb", "sfs", "pfs3"),
+    ".hdz": ("rdb", "ffs", "ofs", "sfs", "pfs3"),
     ".rdsk": ("rdb",),
-    ".img": ("rdb", "ffs", "ofs", "sfs"),
-    ".raw": ("rdb", "ffs", "ofs", "sfs"),
+    ".img": ("rdb", "ffs", "ofs", "sfs", "pfs3"),
+    ".raw": ("rdb", "ffs", "ofs", "sfs", "pfs3"),
     ".rom": ("kickfs",),
     ".kick": ("kickfs",),
 }
@@ -738,6 +779,8 @@ __all__ = [
     "KickstartFilesystem",
     "NAMED_GEOMETRIES",
     "OFSFilesystem",
+    "PFS3Filesystem",
+    "PFS3Mount",
     "Partition",
     "RigidDisk",
     "RigidDiskFilesystem",
