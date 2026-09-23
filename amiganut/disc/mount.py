@@ -14,6 +14,7 @@ contain one and an inner path may legitimately begin with one.
 
 from __future__ import annotations
 
+import stat
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,13 +44,25 @@ class ResolvedMount:
         return split_path(self.path)
 
 
+def _is_image(path: Path) -> bool:
+    """Whether a path holds an image: a regular file or a whole block device.
+
+    A drive attached to the host is opened in place through its device node,
+    which is not a regular file but is read the same way.
+    """
+    try:
+        return path.is_file() or stat.S_ISBLK(path.stat().st_mode)
+    except OSError:
+        return False
+
+
 def split_compound(compound: str) -> tuple[Path, str]:
     """Split ``image.adf:C/List`` into its host path and inner path."""
     text = str(compound)
     if not text:
         raise ConfigurationError("An empty path names nothing.")
     candidate = Path(text)
-    if candidate.exists() and candidate.is_file():
+    if _is_image(candidate):
         return candidate, ""
     # Walk the colons from the right so the longest existing file wins. A
     # trailing colon means "the root of this volume", which is how AmigaDOS
@@ -57,7 +70,7 @@ def split_compound(compound: str) -> tuple[Path, str]:
     positions = [index for index, character in enumerate(text) if character == ":"]
     for index in reversed(positions):
         host = Path(text[:index])
-        if host.is_file():
+        if _is_image(host):
             return host, text[index + 1 :]
     if positions:
         host = Path(text[: positions[0]])
@@ -85,7 +98,7 @@ def mount_image(
 ):
     """Mount an image, choosing the filing system by content when not told."""
     image = Path(image)
-    if not image.is_file():
+    if not _is_image(image):
         raise DataError(f"{image} does not exist.")
     name = filesystem
     if name is None:
@@ -95,7 +108,8 @@ def mount_image(
                 "No AmigaDOS filing system was found in these bytes. Supply the raw, "
                 "uncompressed image rather than an emulator wrapper, an archive member "
                 "or a flux capture. This build reads OFS and FFS volumes "
-                "(DOS\\0 to DOS\\5), RDB partitioned hard drives and Kickstart ROMs."
+                "(DOS\\0 to DOS\\7), SFS and PFS3 volumes, RDB partitioned hard "
+                "drives and Kickstart ROMs."
             )
         name = candidates[0].filesystem
     driver = create_filesystem(name)

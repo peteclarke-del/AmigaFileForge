@@ -58,6 +58,7 @@ from .sfs_blocks import (
     CONTAINER_HEADER,
     HASHTABLE_ID,
     HEADER_SIZE,
+    MAX_NAME_LENGTH,
     NODE_CONTAINER_HEADER,
     NODECONTAINER_ID,
     OBJECT_NODE_SIZE,
@@ -89,6 +90,7 @@ class SFSVolume(SFSWriter):
     """One SFS partition, read through a window onto its image or drive."""
 
     format = "SFS"
+    name_limit = MAX_NAME_LENGTH
 
     def __init__(self, reader: BlockReader):
         self.sector_reader = reader
