@@ -39,6 +39,7 @@ from .blocks import (
     BlockReader,
     Geometry,
 )
+from .sfs import SFS_ID, SFSVolume
 from .rdb import (
     Partition,
     RigidDisk,
@@ -335,6 +336,17 @@ class AmigaDOSMount(AmigaMetadata, Datestamped, Filetyped):
         self.volume.close()
 
 
+class SFSMount(AmigaDOSMount):
+    """The workbench-facing view of one mounted Smart File System volume.
+
+    The AmigaDOS mount only forwards to its volume, and an SFS volume answers
+    the same calls, so the icon handling and path helpers are shared.
+    """
+
+    def __init__(self, volume: SFSVolume, name: str = "sfs"):
+        super().__init__(volume, name)
+
+
 class PathNode:
     """One place inside a mounted volume, whether or not it exists yet.
 
@@ -461,7 +473,7 @@ class AmigaDOSFilesystem:
         if not reader.total_blocks:
             return None
         signature = reader.read_block(0)[:4]
-        if signature[:3] not in (b"DOS", b"PFS", b"SFS"):
+        if signature[:3] not in (b"DOS", b"PFS"):
             return None
         label = DOS_TYPES.get(signature)
         if label is None:
@@ -499,6 +511,28 @@ class FFSFilesystem(AmigaDOSFilesystem):
         if not signature[3] & 1:
             return None
         return Candidate(self.name, found.confidence, found.detail)
+
+
+class SFSFilesystem:
+    """Registry entry for Smart File System volumes."""
+
+    name = "sfs"
+    label = "Smart File System"
+
+    def open(self, reader: BlockReader, geometry: Geometry | None = None) -> SFSMount:
+        return SFSMount(SFSVolume(reader), self.name)
+
+    def identify(self, reader: BlockReader) -> Candidate | None:
+        if not reader.total_blocks or reader.read_block(0)[:4] != SFS_ID:
+            return None
+        try:
+            volume = SFSVolume(reader)
+        except DataError:
+            return Candidate(self.name, 0.5, "SFS root block that does not validate")
+        try:
+            return Candidate(self.name, 1.0, f"SFS volume named {volume.title!r}")
+        finally:
+            volume.blocks.close()
 
 
 class RigidDiskFilesystem:
@@ -570,9 +604,19 @@ class RigidDiskMount:
 
     def open_partition(self, index: int, *, writable: bool | None = None) -> AmigaDOSMount:
         partition = self.partition(index)
-        window = self.reader.window(partition.start_block, partition.total_blocks)
-        if writable is not None:
-            window.writable = bool(writable) and self.reader.writable
+        if writable is None:
+            writable = self.reader.writable
+        # A read-only window must not hold a writable handle, so the window is
+        # opened with the access it will keep rather than adjusted afterwards.
+        window = BlockReader(
+            self.reader.path,
+            writable=bool(writable) and self.reader.writable,
+            offset=self.reader.offset + partition.start_block * self.reader.block_size,
+            length=partition.total_blocks * self.reader.block_size,
+            block_size=self.reader.block_size,
+        )
+        if partition.dos_type == SFS_ID:
+            return SFSMount(SFSVolume(window))
         return AmigaDOSMount(AmigaDOSVolume(window, partition.geometry()))
 
     def to_dict(self) -> dict:
@@ -587,12 +631,13 @@ FILESYSTEMS = {
     "ofs": OFSFilesystem,
     "ffs": FFSFilesystem,
     "rdb": RigidDiskFilesystem,
+    "sfs": SFSFilesystem,
     "kickfs": KickstartFilesystem,
 }
 
 #: Identification order. The partition table is checked first because it wraps
 #: volumes that would otherwise be found at an offset.
-IDENTIFY_ORDER = ("rdb", "ffs", "ofs", "kickfs")
+IDENTIFY_ORDER = ("rdb", "ffs", "ofs", "sfs", "kickfs")
 
 
 def create_filesystem(name: str):
@@ -619,12 +664,12 @@ SUFFIX_HINTS = {
     ".adf": ("ofs", "ffs"),
     ".adz": ("ofs", "ffs"),
     ".dsk": ("ofs", "ffs"),
-    ".hdf": ("rdb", "ffs", "ofs"),
-    ".hda": ("ffs", "ofs", "rdb"),
-    ".hdz": ("rdb", "ffs", "ofs"),
+    ".hdf": ("rdb", "ffs", "ofs", "sfs"),
+    ".hda": ("ffs", "ofs", "rdb", "sfs"),
+    ".hdz": ("rdb", "ffs", "ofs", "sfs"),
     ".rdsk": ("rdb",),
-    ".img": ("rdb", "ffs", "ofs"),
-    ".raw": ("rdb", "ffs", "ofs"),
+    ".img": ("rdb", "ffs", "ofs", "sfs"),
+    ".raw": ("rdb", "ffs", "ofs", "sfs"),
     ".rom": ("kickfs",),
     ".kick": ("kickfs",),
 }
@@ -697,6 +742,8 @@ __all__ = [
     "RigidDisk",
     "RigidDiskFilesystem",
     "RigidDiskMount",
+    "SFSFilesystem",
+    "SFSMount",
     "Stat",
     "create_filesystem",
     "format_volume",
