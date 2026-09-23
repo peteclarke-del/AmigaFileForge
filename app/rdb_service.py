@@ -24,6 +24,22 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type checkers only
     from .image_session import ImageSession
 
 
+#: The DOS types there is a driver for: AmigaDOS OFS and FFS in all eight
+#: variants, the Smart File System and the Professional File System.
+READABLE_DOS_TYPES = frozenset(
+    [bytes([68, 79, 83, variant]) for variant in range(8)]
+    + [b"SFS\x00", b"PFS\x01", b"PFS\x02", b"PFS\x03", b"PDS\x03"]
+)
+
+
+def describe_dos_type(dos_type: bytes) -> str:
+    """Spell a DOS type the way HDToolBox does, such as ``DOS\\3`` or ``MSD\\0``."""
+    letters = "".join(
+        chr(byte) if 32 <= byte < 127 else f"\\{byte}" for byte in dos_type[:3]
+    )
+    return f"{letters}\\{dos_type[3]}" if len(dos_type) == 4 else letters or "unknown"
+
+
 class RdbPartitionMixin:
     """Read a hard drive's partition table and mount one partition."""
 
@@ -74,10 +90,15 @@ class RdbPartitionMixin:
             raise DiskError("This image is not a partitioned hard drive.")
         if index is None:
             session.partition = None
+            session.ffs_capabilities = {}
             self._persist_session(session)
             return None
-        partitions = self.list_partitions(session)
         chosen = int(index)
+        if chosen == session.partition and session.ffs_capabilities:
+            # Every request names its partition; one already open needs no
+            # second look at its filing system.
+            return chosen
+        partitions = self.list_partitions(session)
         if not 0 <= chosen < len(partitions):
             raise DiskError(
                 f"This drive has {len(partitions)} partition(s), so there is no "
@@ -85,6 +106,7 @@ class RdbPartitionMixin:
             )
         session.partition = chosen
         session.content_kind_cache.clear()
+        self.refresh_ffs_capabilities(session)
         self._persist_session(session)
         return chosen
 
@@ -99,19 +121,54 @@ class RdbPartitionMixin:
             return ""
         return str(partitions[index].get("device") or partitions[index].get("name") or "")
 
+    def _require_readable_partition(self, session: ImageSession, index: int) -> None:
+        """Refuse a partition whose DOS type names a filing system with no driver.
+
+        A drive can carry partitions for other systems, such as an MS-DOS or a
+        UNIX partition next to the Amiga ones. Mounting one of those would
+        fail deep inside the engine with a message about a missing root
+        block, so the partition table's own record is checked first.
+        """
+        try:
+            partitions = self.list_partitions(session)
+        except DiskError:
+            return
+        if not 0 <= index < len(partitions):
+            return
+        dos_type = str(partitions[index].get("dosType") or "").encode("latin-1")
+        if dos_type in READABLE_DOS_TYPES:
+            return
+        name = partitions[index].get("device") or f"partition {index}"
+        raise DiskError(
+            f"{name} is formatted with a filing system this build cannot read "
+            f"(DOS type {describe_dos_type(dos_type)}). Nothing on it has been changed."
+        )
+
     @contextmanager
-    def rdb_mount(self, session: ImageSession, *, writable: bool = True):
-        """Mount the selected partition as an ordinary AmigaDOS volume."""
+    def rdb_mount(
+        self, session: ImageSession, *, writable: bool = True, partition: int | None = None
+    ):
+        """Mount a partition as an ordinary volume, the selected one by default.
+
+        Naming the partition lets one request read from one partition of a
+        drive and write to another, as dragging between two panes on the same
+        drive does, without the selection shared by both panes changing.
+        """
         try:
             from amiganut.disc.mount import mount_image
         except ImportError as exc:  # pragma: no cover - packaging failure
             raise DiskError("The Amiganut mount API is unavailable.") from exc
 
-        index = self.selected_partition(session)
+        index = self.selected_partition(session) if partition is None else int(partition)
+        self._require_readable_partition(session, index)
+        writable = writable and self.allows_writes(session)
         with session.lock:
             try:
+                # The session already knows this is a partitioned drive, so
+                # nothing is gained by probing a drive of many gigabytes for
+                # every other kind of image before each change.
                 mount, _name = mount_image(
-                    session.path, writable=writable, partition=index
+                    session.path, writable=writable, partition=index, filesystem="rdb"
                 )
             except Exception as exc:
                 raise DiskError(self._friendly_engine_error(str(exc))) from exc

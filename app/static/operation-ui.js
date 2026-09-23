@@ -9,6 +9,14 @@ window.AmigaOperationUI = (() => {
         ],
         error: "Physical write aborted. The source image is unchanged, but the disk in the drive may be incomplete.",
       };
+      if (mode === "clone") return {
+        message: "Stopping the copy. The drive being written will be left incomplete.",
+        details: [
+          { label: "Drive being written", value: "Do not use it until it has been copied onto again" },
+          { label: "Drive being copied", value: "Only read, so it is unchanged" },
+        ],
+        error: "Copy stopped. The drive being written is incomplete; the drive being copied is unchanged.",
+      };
       if (mode === "read-only") return {
         message: "Stopping at the next safe read boundary. No image data is being changed.",
         details: [

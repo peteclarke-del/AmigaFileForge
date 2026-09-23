@@ -447,6 +447,7 @@ function showHelp() {
                 <li><strong>Tools → Compact filesystem</strong> and <strong>Check filesystem</strong> act on the open partition, not on the whole drive.</li>
               </ol>
             </div>
+            <div class="help-note"><strong>Filing systems on a drive:</strong> a partition can hold FFS in any of its variants, the Smart File System or the Professional File System 3, and all of them can be read and changed. Names can be as long as the partition's filing system allows: 30 characters on FFS, 107 on the long-filename variants, 100 on SFS and up to 106 on PFS3. A drive or hardfile with no partition table, holding one such volume from its first block, opens the same way. A partition for another system, such as CrossDOS, is listed with its DOS type but cannot be opened. PFS3 volumes cannot be compacted here.</div>
             <div class="help-task">
               <h4>Create a new drive</h4>
               <ol>
@@ -455,6 +456,17 @@ function showHelp() {
                 <li>The new drive is created with a Rigid Disk Block and one FFS International partition, which is what an Amiga expects to find.</li>
               </ol>
             </div>
+            <div class="help-task">
+              <h4>Work on a real drive attached through USB</h4>
+              <ol>
+                <li>In the Linux desktop application, attach the drive or memory card through a USB adapter and choose <strong>Open attached drive</strong> on an empty pane, or <strong>File → Open attached drive…</strong>. Only USB drives are listed, each with what it holds.</li>
+                <li>The drive opens where it is, read-only. Browse it and copy files out as with any image.</li>
+                <li>To change it, choose <strong>File → Allow writes to drive…</strong>. Changes then go straight to the drive and cannot be undone. <strong>Make drive read-only</strong> stops them again.</li>
+                <li>Saving, the hex editor, compaction, emulation and deployment work on image files and are not offered for a drive. <strong>File → Export drive to image file…</strong> makes an image file of the whole drive, or of one partition with its <code>.geo</code>, copying straight to the file you choose. Empty space is not written, and a copy that is stopped leaves no file behind.</li>
+                <li><strong>File → Copy drive to another drive…</strong> duplicates the drive onto a second card or drive attached through USB. The drive you choose is erased, must be at least as large as the copy, and is named again before anything is written. The copy is read back and compared with the original when it finishes.</li>
+              </ol>
+            </div>
+            <div class="help-note"><strong>Drive not readable or not listed:</strong> Linux gives whole drives to the administrator until the udev rule that comes with the package is installed, and a drive Linux has mounted must be unmounted first. The Linux desktop guide gives the commands.</div>
             <div class="help-task">
               <h4>Bare hardfiles</h4>
               <ol>

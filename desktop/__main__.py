@@ -119,6 +119,30 @@ def _paired_selection(paths: list[Path]) -> list[Path]:
     ]
 
 
+def _save_path_request(message: str) -> dict | None:
+    """Read a page's request for a save dialog, or None for any other message."""
+    if not message.startswith("{"):
+        return None
+    try:
+        data = json.loads(message)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or data.get("command") != "choose-save-path":
+        return None
+    request_id = str(data.get("requestId") or "")
+    if not request_id or len(request_id) > 64:
+        return None
+    # Only a bare file name is accepted, so the page cannot steer the dialog
+    # into another folder through the name.
+    name = Path(str(data.get("name") or "image.hdf")).name or "image.hdf"
+    return {
+        "id": request_id,
+        "title": str(data.get("title") or "Save image file")[:120],
+        "folder": str(data.get("folder") or Path.home()),
+        "name": name[:255],
+    }
+
+
 def _review_open_plans(message: str) -> list[dict]:
     """Validate one frontend message before any native work is queued."""
     data = json.loads(message)
@@ -286,6 +310,7 @@ def run(argv: list[str] | None = None) -> int:
                 self.native_drop_target.set_propagation_phase(
                     Gtk.PropagationPhase.CAPTURE
                 )
+                self.native_drop_target.connect("accept", self._native_drop_accepted)
                 self.native_drop_target.connect("drop", self._native_files_dropped)
                 self.webview.add_controller(self.native_drop_target)
                 toolbar.set_content(self.webview)
@@ -325,6 +350,10 @@ def run(argv: list[str] | None = None) -> int:
                     preferred_pane = None
                 self._choose_images(None, None, preferred_pane)
                 return
+            save_request = _save_path_request(message)
+            if save_request is not None:
+                self._choose_save_path(save_request)
+                return
             try:
                 reviewed = _review_open_plans(message)
                 for plan in reviewed:
@@ -333,6 +362,46 @@ def run(argv: list[str] | None = None) -> int:
                     self._start_open_worker()
             except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 GLib.idle_add(self._deliver_error, "the selected image", str(exc))
+
+        def _choose_save_path(self, request: dict) -> None:
+            """Ask where to save a file, and tell the page what was chosen.
+
+            A page cannot ask the browser engine for a place to save a file
+            it has not got, and a drive being copied out is far too large to
+            pass through the page. The page asks here instead, and the server
+            writes to the path it is given back.
+            """
+            chooser = Gtk.FileChooserNative.new(
+                request["title"],
+                self.window,
+                Gtk.FileChooserAction.SAVE,
+                "_Save",
+                "_Cancel",
+            )
+            folder = Path(request["folder"]).expanduser()
+            if folder.is_dir():
+                chooser.set_current_folder(Gio.File.new_for_path(str(folder)))
+            chooser.set_current_name(request["name"])
+            self.chooser_targets[chooser] = request["id"]
+            chooser.connect("response", self._save_path_chosen)
+            chooser.show()
+
+        def _save_path_chosen(self, chooser, response) -> None:
+            request_id = self.chooser_targets.pop(chooser, None)
+            path = None
+            try:
+                if response == Gtk.ResponseType.ACCEPT:
+                    chosen = chooser.get_file()
+                    path = chosen.get_path() if chosen else None
+            finally:
+                chooser.destroy()
+            if request_id is None:
+                return
+            script = (
+                "window.AmigaDesktopHost.savePathChosen("
+                f"{json.dumps(request_id)}, {json.dumps(path)});"
+            )
+            self.webview.evaluate_javascript(script, -1, None, None, None)
 
         def _page_file_chooser(self, _view, request) -> bool:
             """Answer a file input the page opened, with a folder when asked.
@@ -488,6 +557,20 @@ def run(argv: list[str] | None = None) -> int:
             finally:
                 self.chooser_targets.pop(chooser, None)
                 chooser.destroy()
+
+        def _native_drop_accepted(self, _target, drop) -> bool:
+            """Leave drags that began inside the window to the page.
+
+            The native target exists for files dragged in from the desktop.
+            Taking a drag between two panes as well left the page's drop
+            unfinished: WebKit lost the list of dragged files, and the drag
+            image stayed on screen until the application closed. A drag this
+            application started carries its own Gdk.Drag; one from outside
+            does not.
+            """
+            if drop.get_drag() is not None:
+                return False
+            return drop.get_formats().contain_gtype(Gdk.FileList.__gtype__)
 
         def _native_files_dropped(self, _target, file_list, x, y) -> bool:
             """Open host files through the local-path adapter, never an upload."""

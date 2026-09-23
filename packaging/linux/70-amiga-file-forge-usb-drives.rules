@@ -1,0 +1,23 @@
+# Let the person logged in at the desktop open USB-attached drives directly.
+#
+# Amiga File Forge can open a hard drive or memory card taken from an Amiga,
+# attached through a USB adapter, and edit it in place. Linux gives whole-disk
+# device nodes to root and the "disk" group only, so without this rule the
+# drive is listed but cannot be read.
+#
+# The rule tags whole USB disks with "uaccess", which makes systemd-logind
+# grant read and write access to the user of the active local session, and
+# withdraw it when they log out. Internal disks are not matched: the test is
+# on the device path, which contains "-usb-" only for drives behind a USB
+# controller. ID_BUS is not used because a USB-to-SATA bridge reports "ata".
+#
+# Access is to the raw device, which includes any USB drive, not only Amiga
+# ones. Install the rule only on a machine where that is acceptable:
+#
+#   sudo install -m 0644 70-amiga-file-forge-usb-drives.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+#   sudo udevadm trigger --subsystem-match=block --action=change
+#
+# The file name sorts before 73-seat-late.rules, which applies the tag.
+
+SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_PATH}=="*-usb-*", TAG+="uaccess"

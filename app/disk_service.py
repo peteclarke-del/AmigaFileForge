@@ -49,6 +49,7 @@ from .amiga_metadata import format_protection, parse_protection
 from .filename_policy import session_name_policy
 from .filesystem_disk_service import FilesystemDiskMixin
 from .amiganut_internals import (
+    collect_copy_items,
     ensure_directory_chain,
     file_copy_item,
     in_storage_order,
@@ -98,6 +99,12 @@ from . import progress as progress_module
 
 COPY_BUFFER_SIZE = 8 * 1024 * 1024
 FICLONE = 0x40049409
+
+
+def _megabytes(size: int) -> str:
+    return f"{size / (1024 * 1024):,.1f} MB"
+
+
 class DiskService(
     SessionDiskMixin,
     FilesystemDiskMixin,
@@ -202,17 +209,19 @@ class DiskService(
         if self._looks_like_iso(path):
             return "iso"
         expected_filesystems = {
-            "ffs": ("ffs", "ofs", "rdb"),
+            "ffs": ("ffs", "ofs", "rdb", "sfs", "pfs3"),
             "ofs": ("ofs", "ffs"),
-            "hdf": ("rdb", "ffs", "ofs"),
+            "hdf": ("rdb", "ffs", "ofs", "sfs", "pfs3"),
             "kickfs": ("kickfs",),
         }.get(expected_kind or "")
         if expected_filesystems:
             try:
-                from amiganut.filesystem import create_filesystem, identify
+                from amiganut.filesystem import FILESYSTEMS, create_filesystem, identify
 
                 filesystems = {
-                    name: create_filesystem(name) for name in expected_filesystems
+                    name: create_filesystem(name)
+                    for name in expected_filesystems
+                    if name in FILESYSTEMS
                 }
                 candidates = identify(
                     path,
@@ -233,15 +242,17 @@ class DiskService(
                 "No AmigaDOS filing system was found in the uploaded bytes. "
                 "The filename extension is only a hint. Supply the raw, uncompressed "
                 "image rather than an emulator wrapper, an archive member or a flux "
-                "capture. This build recognises OFS and FFS volumes (DOS\\0 to "
-                "DOS\\5, including International and Directory Cache), RDB "
-                "partitioned hard drives and Kickstart ROMs. The source image "
+                "capture. This build recognises OFS and FFS volumes in all their "
+                "variants, Smart File System and Professional File System volumes, "
+                "RDB partitioned hard drives and Kickstart ROMs. The source image "
                 "has not been changed."
             )
         filesystem = str(rows[0].get("filesystem", "")).lower()
         if filesystem in {"ofs", "amigados"}:
             return "ofs"
-        if filesystem == "ffs":
+        if filesystem in {"ffs", "sfs", "pfs3"}:
+            # A single SFS or PFS3 volume is opened the way a single FFS volume
+            # is; the mount chooses the driver from the volume's own signature.
             return "ffs"
         if filesystem == "rdb":
             return "hdf"
@@ -255,6 +266,11 @@ class DiskService(
 
     @staticmethod
     def require_writable_geometry(session: ImageSession) -> None:
+        if session.attached_device and not session.device_writes:
+            raise DiskError(
+                "This drive is open read-only. Choose Allow writes on the pane "
+                "first; changes then go straight to the drive and cannot be undone."
+            )
         if session.hfe_read_only:
             raise DiskError(
                 "This HFE uses advanced track features or contains unreadable sectors. "
@@ -285,7 +301,7 @@ class DiskService(
             session.kind in {"ffs", "ofs"}
             and session.path.suffix.lower() in {".hdf", ".hda"}
             and session.descriptor_path is None
-            and session.ffs_capabilities.get("map") != "new"
+            and session.ffs_capabilities.get("map") not in {"sfs", "pfs3"}
         ):
             raise DiskError(
                 "This bare Hardfile HDA image was opened without its matching GEO "
@@ -377,6 +393,80 @@ class DiskService(
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             raise
+
+    def open_attached_drive(self, device: str, model: str) -> ImageSession:
+        """Open a drive attached to the host in place, read-only to begin with.
+
+        Every other session works on a private copy. A drive is too large to
+        copy and the point is to change the drive itself, so the session's
+        image is a link to the drive's stable /dev/disk/by-id name, kept in the
+        session's own folder like any working file. Metadata, recovery and
+        closing the pane therefore stay inside the work directory, and
+        removing the folder removes the link and never the drive.
+
+        The session starts read-only: until writes are allowed, every mount of
+        the drive is opened read-only, so nothing reaches it however it is
+        asked for.
+        """
+        target = Path(device)
+        name = self.safe_filename(f"{model or target.name}.hdf")
+        image_id = uuid.uuid4().hex
+        folder = self.work_dir / image_id
+        folder.mkdir()
+        path = folder / name
+        try:
+            path.symlink_to(target)
+            kind = self.identify_kind(path, "hdf")
+            if kind not in {"hdf", "ffs", "ofs"}:
+                raise DiskError(
+                    "This drive holds no Amiga partition table or volume that "
+                    "the workbench can open."
+                )
+            session = ImageSession(
+                id=image_id,
+                name=name,
+                kind=kind,
+                path=path,
+                attached_device=str(target),
+            )
+            if kind in {"ffs", "ofs"}:
+                self.refresh_ffs_capabilities(session)
+            with self._lock:
+                self.sessions[image_id] = session
+            self._persist_session(session)
+            return session
+        except Exception:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+
+    def allow_drive_writes(self, session: ImageSession, allowed: bool) -> None:
+        """Let changes reach an attached drive, or stop them again."""
+        if not session.attached_device:
+            raise DiskError("Only a drive opened in place has a write switch.")
+        if allowed:
+            device = Path(session.attached_device)
+            if not device.exists():
+                raise DiskError("The drive is no longer attached.")
+            if not os.access(device, os.W_OK):
+                raise DiskError(
+                    "Linux has not given this account permission to write to the "
+                    "drive. Install the udev rule that comes with Amiga File "
+                    "Forge, then attach the drive again."
+                )
+            real = os.path.realpath(device)
+            with open("/proc/mounts", encoding="utf-8", errors="replace") as mounts:
+                for line in mounts:
+                    source = line.split(" ", 1)[0]
+                    if source.startswith("/dev/") and re.fullmatch(
+                        rf"{re.escape(real)}(p?\d+)?", os.path.realpath(source)
+                    ):
+                        raise DiskError(
+                            "Linux has part of this drive mounted. Unmount it first, "
+                            "because two systems writing to one drive corrupts it."
+                        )
+        with session.lock:
+            session.device_writes = bool(allowed)
+            self._persist_session(session)
 
     def _new_session_source(
         self,
@@ -569,6 +659,9 @@ class DiskService(
             detected_kind = self.identify_kind(path, kind)
             if detected_kind != kind:
                 session.kind = detected_kind
+                # A hardfile named as a drive can turn out to be one volume,
+                # which is then described as any single volume is.
+                self.refresh_ffs_capabilities(session)
         self._normalise_hardfile_dat_size(session)
         self._apply_target_hardware(session)
         with self._lock:
@@ -773,6 +866,15 @@ class DiskService(
         ),
     }
 
+    #: Filing systems no Kickstart 3.1 ROM carries, with the handler each
+    #: needs. A real drive normally carries it in its Rigid Disk Block.
+    HANDLER_FORMATS = {
+        "SFS": "SmartFilesystem",
+        "PFS3": "pfs3aio",
+        "OFS-LNFS": "FastFileSystem 46 or later",
+        "FFS-LNFS": "FastFileSystem 46 or later",
+    }
+
     def _apply_target_hardware(self, session: ImageSession) -> None:
         """Check and repair a volume for the machine it is destined for.
 
@@ -822,6 +924,14 @@ class DiskService(
                 f"This is a {volume_format} volume. {machine.capitalize()} has no "
                 "FastFileSystem in ROM, so it will not mount until "
                 "L/FastFileSystem and a Mountlist entry are present.",
+            )
+        elif volume_format in self.HANDLER_FORMATS:
+            self._append_warning(
+                session,
+                f"{machine.capitalize()} has no handler for {volume_format} volumes "
+                f"in ROM, so it mounts this one only once "
+                f"{self.HANDLER_FORMATS[volume_format]} is installed, from the "
+                "drive's Rigid Disk Block or from L: with a Mountlist entry.",
             )
         elif volume_format not in supported:
             self._append_warning(
@@ -955,6 +1065,24 @@ class DiskService(
             return
 
     @staticmethod
+    def _keeps_amigados_blocks(session: ImageSession) -> bool:
+        """Whether the image is one OFS or FFS volume laid out from block zero.
+
+        The hardfile repairs below find the root block where AmigaDOS puts it
+        and rewrite checksums in AmigaDOS headers. An SFS or PFS3 volume keeps
+        file data at that position and seals its own blocks differently, so
+        those repairs must never touch it.
+        """
+        if session.kind not in {"ffs", "ofs"}:
+            return False
+        try:
+            with session.path.open("rb") as image:
+                signature = image.read(4)
+        except OSError:
+            return False
+        return signature[:3] not in (b"SFS", b"PFS", b"PDS")
+
+    @staticmethod
     def _finalise_hardfile_directories(session: ImageSession) -> int:
         """Repair block checksums and revalidate the allocation bitmap.
 
@@ -967,7 +1095,7 @@ class DiskService(
 
         Returns the number of blocks changed.
         """
-        if session.kind not in {"ffs", "ofs"}:
+        if not DiskService._keeps_amigados_blocks(session):
             return 0
 
         from amiganut.filesystem.blocks import (
@@ -1038,6 +1166,8 @@ class DiskService(
         from amiganut.file import datetime_to_datestamp
         from amiganut.filesystem.blocks import apply_checksum, long_at, put_long
 
+        if not DiskService._keeps_amigados_blocks(session):
+            return False
         with session.lock:
             source_mtime = session.path.stat().st_mtime_ns
             if session.finalised_mtime_ns == source_mtime:
@@ -2222,19 +2352,23 @@ class DiskService(
         }
 
     @staticmethod
-    def validate_ofs_prefix(prefix: str) -> str:
+    def validate_ofs_prefix(prefix: str, session: ImageSession | None = None) -> str:
         """Validate and normalise a directory path inside an AmigaDOS volume.
 
         AmigaDOS drawers nest, so a destination is a full path rather than a
         single catalogue letter. Every component is checked against the same
         name policy that applies to a file, because a drawer that a real
         machine cannot name is no more useful than a file it cannot name.
+        Given the session, the limit is the volume's own, which is longer on
+        SFS, PFS3 and the long-filename FFS variants.
         """
+        limit = session_name_policy(session).limit if session is not None else 30
         path = amiga_paths.normalise(prefix)
         for part in amiga_paths.split(path):
-            if len(part) > 30:
+            if len(part) > limit:
                 raise DiskError(
-                    f"“{part}” is longer than the 30 characters an Amiga name can hold."
+                    f"“{part}” is longer than the {limit} characters a name "
+                    "can hold on this volume."
                 )
             if any(character in ":/\\" for character in part):
                 raise DiskError("An Amiga name cannot contain : / or \\.")
@@ -2257,8 +2391,8 @@ class DiskService(
             destination = amiga_paths.normalise(item.get("destination"))
             if not source or not destination:
                 raise DiskError("Both a source and a destination path are required.")
-            self.validate_ofs_prefix(amiga_paths.parent(source))
-            self.validate_ofs_prefix(amiga_paths.parent(destination))
+            self.validate_ofs_prefix(amiga_paths.parent(source), session)
+            self.validate_ofs_prefix(amiga_paths.parent(destination), session)
             self.validate_leaf_name(session, amiga_paths.leaf(destination))
             checked.append({"source": source, "destination": destination})
         self.require_writable_geometry(session)
@@ -2876,7 +3010,7 @@ class DiskService(
         if self.mountable(session):
             # Every component of the destination must be a legal Amiga name,
             # including the drawers above the file.
-            self.validate_ofs_prefix(amiga_paths.parent(destination))
+            self.validate_ofs_prefix(amiga_paths.parent(destination), session)
         self.validate_leaf_name(session, amiga_paths.leaf(destination))
         if self.mountable(session):
             try:
@@ -2949,7 +3083,7 @@ class DiskService(
         if not is_kickfs:
             # Every AmigaDOS volume nests, so a host tree can be preserved on
             # any of them. Only the names have to be legal.
-            destination_dir = self.validate_ofs_prefix(destination_dir)
+            destination_dir = self.validate_ofs_prefix(destination_dir, session)
         if not items:
             raise DiskError("No relevant files were selected for import.")
 
@@ -3071,6 +3205,8 @@ class DiskService(
         recursive: bool,
         source_side: int | None = None,
         target_side: int | None = None,
+        progress: Callable | None = None,
+        source_partition: int | None = None,
     ) -> None:
         if target.kind == "dms":
             raise DiskError("DMS archives are read-only conversion sources.")
@@ -3099,12 +3235,15 @@ class DiskService(
                     temp_path.unlink(missing_ok=True)
             return
         self.require_writable_geometry(target)
-        if target.kind in {"ofs", "ffs"}:
-            self.validate_ofs_prefix(amiga_paths.parent(target_inner))
-        self.validate_leaf_name(
-            target,
-            target_inner if target.kind == "kickfs" else amiga_paths.leaf(target_inner),
-        )
+        self.require_mounted_volume(target)
+        if self.mountable(target):
+            self.validate_ofs_prefix(amiga_paths.parent(target_inner), target)
+        # A whole volume copied into the root of another names no new entry.
+        if target.kind == "kickfs" or amiga_paths.split(target_inner):
+            self.validate_leaf_name(
+                target,
+                target_inner if target.kind == "kickfs" else amiga_paths.leaf(target_inner),
+            )
         if source.kind == "dms":
             dms_file = self._dms_file(source, source_inner)
             temp_path = self.work_dir / f"dms-copy-{uuid.uuid4().hex}"
@@ -3116,7 +3255,10 @@ class DiskService(
             return
         source_path = self.resolve(source)
         target_path = self.resolve(target)
-        if target.kind in {"ffs", "ofs"}:
+        # A partition of a hard drive is copied through its own mount, as a
+        # floppy is. The engine's command line addresses the whole image, and
+        # on a drive that is the partition table rather than a volume.
+        if self.mountable(target):
             try:
                 from amiganut.disc.mount import resolve_mount
             except ImportError as exc:
@@ -3130,24 +3272,29 @@ class DiskService(
                     target_inner,
                     recursive=recursive,
                     destination_slash=False,
+                    name_limit=session_name_policy(target).limit,
+                    progress=progress,
                 )
 
+            if source.kind == "hdf" and source_partition is None:
+                source_partition = source.partition
+            same_volume = source.id == target.id and (
+                source.kind != "hdf" or source_partition == target.partition
+            )
             with self._locked_sessions(source, target):
-                if source.kind in {"ffs", "ofs"}:
-                    if source.id == target.id:
-                        with self.ffs_mount(target) as mount:
-                            copy_between_mounts(mount, mount)
-                    else:
-                        with self.ffs_mount(source) as source_mount:
-                            with self.ffs_mount(target) as target_mount:
-                                copy_between_mounts(source_mount, target_mount)
+                if same_volume:
+                    with self.ffs_mount(target) as mount:
+                        copy_between_mounts(mount, mount)
+                elif self.mountable(source) or source_partition is not None:
+                    with self.ffs_mount(source, source_partition) as source_mount:
+                        with self.ffs_mount(target) as target_mount:
+                            copy_between_mounts(source_mount, target_mount)
                 else:
                     source_root = self.inner_for(source, "$", source_side)
                     with resolve_mount(self.compound(source_path, source_root)) as source_resolved:
                         with self.ffs_mount(target) as target_mount:
                             copy_between_mounts(source_resolved.mount, target_mount)
-            target.dirty = True
-            target.hfe_export_path = None
+            self._mark_mutated(target)
             return
         args = ["cp", "--no-wildcards"]
         if recursive:
@@ -3324,6 +3471,98 @@ class DiskService(
             text,
         )
         return relocated.encode("latin-1", "replace")
+
+    def _copy_between_ffs_mounts(
+        self,
+        source_mount,
+        target_mount,
+        source_inner: str,
+        target_inner: str,
+        *,
+        recursive: bool,
+        destination_slash: bool,
+        name_limit: int | None = None,
+        progress: Callable | None = None,
+    ) -> None:
+        """Copy a file or tree from one mounted volume into another.
+
+        This is the engine's own ``cp`` carried out on mounts the workbench
+        already holds, so a partition of a drive is addressed as the volume
+        it is. Every destination is collected first, with each file's size
+        rather than its bytes, so a tree of gigabytes is never held in memory.
+        Two things are refused at that point rather than part way through: a
+        name the target cannot hold, as SFS allows beside FFS, and a copy that
+        cannot fit in the target's free space.
+        """
+        from amiganut.filesystem.amigados import join_path, split_path
+
+        try:
+            items = collect_copy_items(
+                source_mount,
+                join_path(split_path(source_inner)),
+                dst_mount=target_mount,
+                dst_bare=join_path(split_path(target_inner)),
+                dst_slash=destination_slash,
+                recursive=recursive,
+                wildcards=False,
+                load_data=False,
+            )
+        except DiskError:
+            raise
+        except Exception as exc:
+            raise DiskError(self._friendly_engine_error(str(exc))) from exc
+        if name_limit:
+            for item in items:
+                for part in split_path(str(item["dst"])):
+                    if len(part) > name_limit:
+                        raise DiskError(
+                            f"“{part}” is longer than the {name_limit} characters "
+                            "a name can hold on the destination. Nothing was copied."
+                        )
+        files = [item for item in items if item["kind"] == "file"]
+        for item in files:
+            if target_mount.exists(str(item["dst"])):
+                raise DiskError(
+                    f"{item['dst']} already exists on the destination. Nothing was copied."
+                )
+        needed = sum(int(item.get("size") or 0) for item in files)
+        try:
+            free = int(target_mount.free_bytes())
+        except Exception:
+            free = None
+        # Directory and file headers take space of their own, one block each
+        # at the least, so the estimate adds them to the data.
+        overhead = len(items) * 1024
+        if free is not None and needed + overhead > free:
+            raise DiskError(
+                f"This copy needs about {_megabytes(needed + overhead)} but the "
+                f"destination has {_megabytes(free)} free. Nothing was copied."
+            )
+        written = 0
+        try:
+            for item in in_storage_order(source_mount, items):
+                if item["kind"] == "mkdir":
+                    ensure_directory_chain(target_mount, item["dst"])
+                    continue
+                if progress is not None:
+                    progress(
+                        f"Copying {amiga_paths.leaf(str(item['dst']))}",
+                        written,
+                        len(files),
+                    )
+                item["data"] = source_mount.read_bytes(item["src"])
+                try:
+                    self._write_ffs_copy_item(
+                        target_mount, str(item["dst"]), item, write_copy_item
+                    )
+                finally:
+                    item.pop("data", None)
+                written += 1
+            target_mount.flush()
+        except DiskError:
+            raise
+        except Exception as exc:
+            raise DiskError(self._friendly_engine_error(str(exc))) from exc
 
     @staticmethod
     def _write_ffs_copy_item(
@@ -3654,6 +3893,7 @@ class DiskService(
                     target_directory,
                     recursive=True,
                     destination_slash=True,
+                    name_limit=session_name_policy(target).limit,
                 )
 
             with self._locked_sessions(source, target):
