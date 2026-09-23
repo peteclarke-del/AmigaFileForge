@@ -106,11 +106,12 @@ def mount_image(
         reader.close()
         raise
     if isinstance(mount, RigidDiskMount) and partition is not None:
+        # The partition mount opens its own handle onto its part of the drive,
+        # so the one used to read the partition table is not kept open.
         try:
             return mount.open_partition(partition, writable=writable), name
-        except Exception:
+        finally:
             mount.close()
-            raise
     return mount, name
 
 

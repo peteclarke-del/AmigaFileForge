@@ -2519,6 +2519,14 @@ class DiskService(
                 f"Valid Kickstart ROM · all block CRCs passed · {details['fileCount']} file(s) · "
                 f"{session.path.stat().st_size // 1024} KiB · {state}"
             )
+        if self.mountable(session) and session.kind == "hdf":
+            # A drive's command-line check covers every partition at once; the
+            # one on screen is checked on its own, by its own filing system.
+            with self.ffs_mount(session) as mount:
+                problems = mount.validate()
+            if problems:
+                raise DiskError(" ".join(problems[:5]))
+            return "No structural errors found"
         disk_path = self.resolve(session)
         self._run(["validate", str(disk_path)])
         return "No structural errors found"
@@ -2527,6 +2535,10 @@ class DiskService(
         if session.kind == "dms":
             raise DiskError("DMS archives are read-only; convert the DMS to ADF or ADZ before editing files.")
         self.require_writable_geometry(session)
+        if session.kind == "hdf" and session.partition is not None:
+            self._mutate_partition(session, [part for part in args if part])
+            self._mark_mutated(session)
+            return
         with session.lock:
             disk_path = self.resolve(session)
             expanded = []
@@ -2538,6 +2550,50 @@ class DiskService(
                     expanded.append(part.replace("{image}", str(disk_path)))
             self._run(expanded)
             self._mark_mutated(session)
+
+    def _mutate_partition(self, session: ImageSession, args: list[str]) -> None:
+        """Carry out an engine command on the selected partition of a drive.
+
+        The engine's command line addresses a whole image, and a drive with a
+        partition table has no single volume to act on. Callers send the same
+        few commands whatever the image is, so for a partition they are
+        carried out here through the partition's own mount, whichever filing
+        system it holds.
+        """
+        if not args:
+            raise DiskError("No change was requested.")
+        command, rest = args[0], args[1:]
+        flags = {part for part in rest if part.startswith("--") or part == "-p"}
+        paths = [part for part in rest if part not in flags]
+
+        def inner(part: str) -> str:
+            return part[len("{image}:"):] if part.startswith("{image}:") else part
+
+        with self.ffs_mount(session) as mount:
+            if command == "rm":
+                for path in (inner(part) for part in paths):
+                    if not mount.exists(path):
+                        if "--force" in flags:
+                            continue
+                        raise DiskError(f"“{path}” does not exist.")
+                    if mount.stat(path).is_dir:
+                        if "--recursive" not in flags and any(True for _ in mount.iter_entries(path)):
+                            raise DiskError(f"“{path}” is a drawer that is not empty.")
+                        mount.remove(path, recursive=True, force="--force" in flags)
+                    else:
+                        mount.remove(path, force="--force" in flags)
+            elif command == "mv" and len(paths) == 2:
+                source, destination = inner(paths[0]), inner(paths[1])
+                if mount.exists(destination) and source.casefold() != destination.casefold():
+                    if "--force" not in flags:
+                        raise DiskError(f"“{destination}” already exists.")
+                    mount.remove(destination, recursive=True, force=True)
+                mount.rename(source, destination)
+            elif command == "mkdir" and len(paths) == 1:
+                mount.make_directory(inner(paths[0]), parents="-p" in flags, exist_ok="-p" in flags)
+            else:
+                raise DiskError("That change is not available inside a hard-drive partition.")
+            mount.flush()
 
     def make_directory(
         self,
