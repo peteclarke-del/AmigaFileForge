@@ -8,6 +8,8 @@ code above it never touches an offset directly.
 
 from __future__ import annotations
 
+import os
+import stat
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -159,6 +161,23 @@ def put_signed_long(block: bytearray, offset: int, value: int) -> None:
     struct.pack_into(">i", block, offset, int(value))
 
 
+def media_size(handle) -> int:
+    """Return the size in bytes of an open image file or block device.
+
+    A regular file reports its length through ``stat``. A block device, such
+    as a drive taken from an Amiga and attached through a USB adapter, reports
+    a length of zero there, so its capacity is found by seeking to the end.
+    """
+    details = os.fstat(handle.fileno())
+    if not stat.S_ISBLK(details.st_mode):
+        return details.st_size
+    position = handle.tell()
+    try:
+        return handle.seek(0, os.SEEK_END)
+    finally:
+        handle.seek(position)
+
+
 class BlockReader:
     """A seekable window onto an image file, addressed in whole blocks."""
 
@@ -175,7 +194,7 @@ class BlockReader:
         self.writable = bool(writable)
         self.block_size = int(block_size)
         self._handle = self.path.open("r+b" if writable else "rb")
-        size = self.path.stat().st_size
+        size = media_size(self._handle)
         self.offset = int(offset)
         if self.offset < 0 or self.offset > size:
             raise DataError("The partition starts beyond the end of the image.")
@@ -210,6 +229,20 @@ class BlockReader:
             data = data.ljust(self.block_size, b"\0")
         return data
 
+    def read_range(self, offset: int, length: int) -> bytes:
+        """Read ``length`` bytes starting ``offset`` bytes into this window.
+
+        A filing system with its own block size, or one reading a long run of
+        file data, asks for the whole range at once rather than block by block.
+        """
+        if offset < 0 or length < 0 or offset + length > self.length:
+            raise DataError("The requested range is outside this volume.")
+        self._handle.seek(self.offset + offset)
+        data = self._handle.read(length)
+        if len(data) < length:
+            data = data.ljust(length, b"\0")
+        return data
+
     def write_block(self, number: int, data: bytes) -> None:
         if not self.writable:
             raise DataError("This volume is open read-only.")
@@ -220,9 +253,28 @@ class BlockReader:
         self._handle.seek(self.offset + number * self.block_size)
         self._handle.write(data)
 
+    def write_range(self, offset: int, data: bytes) -> None:
+        """Write bytes starting ``offset`` bytes into this window."""
+        if not self.writable:
+            raise DataError("This volume is open read-only.")
+        if offset < 0 or offset + len(data) > self.length:
+            raise DataError("The requested range is outside this volume.")
+        self._handle.seek(self.offset + offset)
+        self._handle.write(data)
+
     def flush(self) -> None:
         if self.writable:
             self._handle.flush()
+
+    def sync(self) -> None:
+        """Push every write so far to the medium before anything that depends on it.
+
+        A filing system that orders its writes for crash safety needs each
+        stage on the disk, not in a cache, before the next one begins.
+        """
+        if self.writable:
+            self._handle.flush()
+            os.fsync(self._handle.fileno())
 
     def window(self, offset_blocks: int, length_blocks: int) -> "BlockReader":
         """Open a nested reader for one partition of this device."""
@@ -330,6 +382,7 @@ __all__ = [
     "is_ffs",
     "is_international",
     "long_at",
+    "media_size",
     "names_match",
     "put_long",
     "put_signed_long",
