@@ -122,7 +122,13 @@ class Partition:
 
     @property
     def blocks_per_cylinder(self) -> int:
-        return self.surfaces * self.blocks_per_track * self.sectors_per_block
+        # The geometry is counted in sectors of ``block_size`` bytes, and a
+        # cylinder is surfaces times sectors per track whatever the filing
+        # system does with them. ``sectors_per_block`` only says how many of
+        # those sectors the filing system groups into one of its own blocks,
+        # as SFS does with 1024-byte blocks, so it takes no part in placing
+        # the partition on the drive.
+        return self.surfaces * self.blocks_per_track
 
     @property
     def start_block(self) -> int:

@@ -6,8 +6,8 @@ standard library, and is versioned with the application.
 
 ## What it implements
 
-One class covers `DOS\0` to `DOS\5`, because the variants differ in three
-decisions rather than three implementations:
+One class covers `DOS\0` to `DOS\7`, because the variants differ in a few
+decisions rather than in their implementation:
 
 | DOS type | Name | Data blocks | Name hashing | Directories | Name limit |
 | --- | --- | --- | --- | --- | ---: |
@@ -17,10 +17,28 @@ decisions rather than three implementations:
 | `DOS\3` | FFS International | whole 512-byte blocks | Latin-1 folding | hash table | 30 |
 | `DOS\4` | OFS Directory Cache | 24-byte header per block | Latin-1 folding | hash table plus cache | 30 |
 | `DOS\5` | FFS Directory Cache | whole 512-byte blocks | Latin-1 folding | hash table plus cache | 30 |
+| `DOS\6` | OFS Long Filenames | 24-byte header per block | Latin-1 folding | hash table | 107 |
+| `DOS\7` | FFS Long Filenames | whole 512-byte blocks | Latin-1 folding | hash table | 107 |
 
-`DOS\6` and `DOS\7` (long filenames, 107 characters), `PFS\3`, `SFS\0` and
-`SFS\2` are identified and reported, but opened read-only: this build will not
-write structures it cannot verify.
+On a Directory Cache volume every change rewrites the affected directory's
+cache blocks, and `validate` compares each cache with the hash chains it
+summarises. `rebuild_dircache` rewrites every cache from the hash chains, which
+repairs a volume an earlier build of this engine left with stale caches.
+
+On a long-filename volume a name and its comment share one 112-byte area of the
+header block. A comment that no longer fits beside its name moves to a comment
+block of its own, and moves back when it fits again. The layout follows
+amitools; no AmigaOS 3.2 FastFileSystem has yet checked a volume written here.
+
+Two other filing systems have modules of their own, because they share nothing
+with FFS below the directory level:
+
+- `sfs.py` and `sfs_write.py` read and write the Smart File System, `SFS\0`.
+- `pfs3.py`, `pfs3_write.py` and `pfs3_check.py` read and write the
+  Professional File System 3, `PFS\1` to `PFS\3` and `PDS\3`.
+
+Both present the same volume interface as the FFS class, so everything above
+them works unchanged. `SFS\2` is named but has no driver.
 
 An AmigaDOS directory is a hash table with overflow chains, so it has no fixed
 entry count. The only real limit is free blocks, and that is what the pane

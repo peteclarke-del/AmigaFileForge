@@ -64,7 +64,7 @@ A release `.deb` installs the same desktop host without retaining a Git
 checkout or creating a per-checkout virtual environment:
 
 ```bash
-sudo apt install ./amiga-file-forge_1.5.0-1.deb13_amd64.deb
+sudo apt install ./amiga-file-forge_1.6.0-1.deb13_amd64.deb
 ```
 
 The package places the shared application in `/opt/amiga-file-forge` and the
@@ -180,6 +180,75 @@ but its raw bitcell representation does not support automatic verification.
 
 The complete safety and troubleshooting workflow is in the
 [physical floppy guide](PHYSICAL-FLOPPY-GUIDE.md).
+
+## Hard drives and memory cards attached through USB
+
+A hard drive or CompactFlash card taken from an Amiga, or the SD card from a
+PiStorm, can be attached through a USB adapter and opened where it is. Choose
+**Open attached drive** on an empty pane, or **File → Open attached drive…**
+in any pane. Only drives behind a USB controller are listed; the machine's own
+disks never are.
+
+The drive can be partitioned with a Rigid Disk Block, as HDToolBox leaves it,
+or hold one volume from its first block, as a card formatted in an emulator
+often does. Each partition can be FFS in any of its variants, the Smart File
+System or the Professional File System 3, and all of them can be read and
+changed. A partition for another system, such as CrossDOS, is listed with its
+DOS type but not opened.
+
+Linux gives whole drives to the administrator only, so the desktop user cannot
+read one until a udev rule allows it. The package carries that rule but does
+not install it, because it gives the person at the desktop raw access to every
+USB disk and not only Amiga ones. To install it:
+
+```bash
+sudo install -m 0644 /usr/share/doc/amiga-file-forge/70-amiga-file-forge-usb-drives.rules /etc/udev/rules.d/
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=block --action=change
+```
+
+From a checkout the rule is in `packaging/linux/`. Until it is installed a
+drive still appears in the list, with the reason it cannot be opened.
+
+A drive is not copied, because it can be far larger than the working storage
+and the point is to change the drive itself. That makes it different from an
+image in three ways:
+
+- It opens read-only. **File → Allow writes to drive…** lets changes through,
+  and **Make drive read-only** stops them again. Reopening the application
+  always brings the drive back read-only.
+- Changes go straight to the drive and cannot be undone. There are no
+  checkpoints, because each one would be a copy of the whole drive.
+- Anything that works on a whole image file is not offered: saving, the
+  hex editor, compaction, running in an emulator and hardware deployment.
+  **File → Export drive to image file…** makes an image file of the drive
+  for those, or copy the files you need into an image in another pane.
+
+Exporting copies straight from the drive to the file you choose, a piece at a
+time, and can be stopped part way without leaving a file behind. It offers the
+drive as its partition table describes it, which is what an emulator mounts
+and is often much smaller than the card holding it; every byte of the device,
+for a complete archive; or one partition alone as a hardfile, with a `.geo`
+file beside it holding the geometry the partition table gave it. Empty space
+is not written, so on most Linux filing systems the file takes only the room
+its contents need. The drive cannot be changed while the copy runs.
+
+**File → Copy drive to another drive…** duplicates the drive onto a second
+card or drive attached through USB, to set up another machine or to move to a
+new card before the old one fails. It offers the drive as its partition table
+describes it, or every byte of the device. Every other attached drive is
+listed; one that cannot take the copy says why: it is too small, mounted,
+write-protected, not yet covered by the udev rule, or open in a pane. The
+drive you choose is erased, so it is named again in a confirmation before
+anything is written. Every byte is written, empty space included, because
+whatever the card held before would otherwise remain inside the new volumes.
+The copy is then read back from the drive and compared with the original.
+Stopping part way leaves the drive being written incomplete; the drive being
+copied is only ever read.
+
+A drive that Linux has mounted, even one partition of it, is refused, because
+two systems writing to one drive corrupt it. Unmount it in the file manager
+first. A card whose write-protect switch is on can be browsed but not changed.
 
 ## Emulator paths
 

@@ -412,7 +412,7 @@ def create_files_blueprint(
             raise DiskError("This view cannot contain ordinary files.")
         destination_dir = str(data.get("destination") or "$").rstrip(".")
         if session.kind == "ofs":
-            destination_dir = service.validate_ofs_prefix(destination_dir)
+            destination_dir = service.validate_ofs_prefix(destination_dir, session)
         name = service.validate_leaf_name(session, str(data.get("name") or ""))
         existing = service.list_directory(session, destination_dir, side)["entries"]
         if any(str(row.get("name") or "").casefold() == name.casefold() for row in existing):
@@ -485,7 +485,7 @@ def create_files_blueprint(
         name = service.validate_leaf_name(session, name)
         destination_dir = request.form.get("destination", "$").rstrip(".")
         if session.kind == "ofs":
-            destination_dir = service.validate_ofs_prefix(destination_dir)
+            destination_dir = service.validate_ofs_prefix(destination_dir, session)
         destination = name if session.kind == "kickfs" else amiga_paths.join(destination_dir, name)
         with tempfile.NamedTemporaryFile(dir=work_dir, prefix="import-", delete=False) as temp:
             upload.save(temp)
@@ -588,16 +588,26 @@ def create_files_blueprint(
         # Each side of a transfer names the partition it works in, because a
         # path is only unique inside the volume that holds it.
         apply_partition(service, source, data.get("sourcePartition"))
+        # Taken before the target is applied: two panes on one drive share a
+        # session, and the target's partition would otherwise replace it.
+        source_partition = source.partition if source.kind == "hdf" else None
         apply_partition(service, target, data.get("targetPartition"))
-        service.copy(
-            source,
-            data["sourcePath"],
-            target,
-            data["targetPath"],
-            bool(data.get("recursive")),
-            optional_int(data.get("sourceSide")),
-            optional_int(data.get("targetSide")),
-        )
+        with operations.tracked(
+            data.get("operationId"),
+            f"Copying {data['sourcePath']}",
+            "Copy complete",
+        ) as progress:
+            service.copy(
+                source,
+                data["sourcePath"],
+                target,
+                data["targetPath"],
+                bool(data.get("recursive")),
+                optional_int(data.get("sourceSide")),
+                optional_int(data.get("targetSide")),
+                progress=progress,
+                source_partition=source_partition,
+            )
         return jsonify(image=service.summary(target))
 
     @blueprint.post("/api/transfer-image-to-directory")
