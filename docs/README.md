@@ -24,7 +24,7 @@ that match the running frontend.
 | Prepare a drive with AmigaOS from your own Workbench floppies, or install a floppy onto it with staging, WHDLoad or its own installer | [Preparing a drive and installing floppies](INSTALL-GUIDE.md) |
 | Inspect, compare, build, patch or program ROM and Kickstart ROMs | [ROM image handbook](ROM-GUIDE.md) |
 | Build and validate a release | [Release checklist](RELEASE-CHECKLIST.md) |
-| Review the stable 1.5.0 release | [Amiga File Forge 1.5.0 notes](releases/1.5.0.md) |
+| Review the stable 1.6.0 release | [Amiga File Forge 1.6.0 notes](releases/1.6.0.md) |
 | Contribute code or documentation | [Contribution guide](../CONTRIBUTING.md) |
 | Understand maintainership and project decisions | [Project governance](../GOVERNANCE.md) |
 | Report a vulnerability | [Security policy](../SECURITY.md) |
@@ -47,6 +47,7 @@ that match the running frontend.
 | Partitioned hard drives, HDF with a Rigid Disk Block | Yes, every partition it chains to | Yes, inside any mounted partition | Yes, with one FFS International partition | Files, drawers and complete images | Rigid Disk Block, partition bounds, launcher, STACK and access checks | One partition as a sector image | Complete drive and README |
 | SPS preservation captures, IPF | Yes, when the SPS decoder library is installed | No, the format records a physical read | No | Recovered sectors into writable media | Per-sector recovery report | Sector image | Working image and README |
 | FFS images in every DOS type, plain, international and directory cache | Yes, including drawers | Where the detected layout is writable, including protection bits, comment and datestamp | Yes, for supported layouts | Files, directories and images | Filesystem, bitmap, launcher and compatibility checks | Sector image; HFE and SCP for the 3.5-inch densities | Image, metadata and README |
+| SFS and PFS3 volumes, alone in a file or in a partition | Yes, including drawers | Yes, including protection bits, comment and datestamp | No | Files and directories | The filing system's own consistency checks | No | Image and README |
 | Hardfile HDA and GEO | Yes, including deep trees | Yes, including protection bits, comment and datestamp | Yes | Files, trees and extracted disks | Geometry, map, directory and installed-software checks | No, the HDA and GEO geometry has no single-file equivalent | HDA, GEO and README |
 | HDF, HDD, IMG, RAW and BIN AmigaDOS media | Yes | Where the detected layout is writable | Selected layouts | Files and directories | Geometry, map and target-profile checks | No | Image and README |
 | DMS archives | Yes, as a decoded hierarchy | Same-length proven members | No | Extracted files into writable media | Physical chunks, reconstruction proof and structural comparison | No | Rebuilt source or converted media |

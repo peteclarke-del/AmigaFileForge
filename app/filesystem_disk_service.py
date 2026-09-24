@@ -23,6 +23,16 @@ class FilesystemDiskMixin:
         return session.kind == "hdf" and session.partition is not None
 
     @staticmethod
+    def allows_writes(session: ImageSession) -> bool:
+        """Whether this session may open its image for writing.
+
+        A working copy always may. A drive opened in place may only once the
+        user has allowed writes, and until then every mount of it is opened
+        read-only, so a write cannot reach the drive by any route.
+        """
+        return not session.attached_device or session.device_writes
+
+    @staticmethod
     def require_mounted_volume(session: ImageSession) -> None:
         """Refuse a volume operation on a drive with no partition chosen.
 
@@ -36,7 +46,7 @@ class FilesystemDiskMixin:
             raise DiskError("Choose a partition on this hard drive first.")
 
     @contextmanager
-    def ffs_mount(self, session: ImageSession):
+    def ffs_mount(self, session: ImageSession, partition: int | None = None):
         """Open an identified FFS image without probing or copying it again.
 
         A partition of a hard drive is an ordinary AmigaDOS volume that starts
@@ -44,26 +54,26 @@ class FilesystemDiskMixin:
         contract and every caller downstream stays unaware of the difference.
         """
         if session.kind == "hdf":
-            if session.partition is None:
+            if session.partition is None and partition is None:
                 raise DiskError("Choose a partition on this hard drive first.")
-            with self.rdb_mount(session) as mount:
+            with self.rdb_mount(session, partition=partition) as mount:
                 yield mount
             return
         if session.kind not in {"ffs", "ofs"}:
             raise DiskError("This operation requires an AmigaDOS volume.")
         try:
-            from amiganut.filesystem import create_filesystem, geometry_from_dsc, reader_for
+            from amiganut.filesystem import geometry_from_dsc, reader_for
         except ImportError as exc:
             raise DiskError("The Amiganut FFS filesystem API is unavailable.") from exc
 
         with session.lock:
-            reader = reader_for(session.path, writable=True)
+            reader = reader_for(session.path, writable=self.allows_writes(session))
             mount = None
             try:
                 geometry = None
                 if session.descriptor_path and session.descriptor_path.is_file():
                     geometry = geometry_from_dsc(session.descriptor_path.read_bytes())
-                mount = create_filesystem("amigados").open(reader, geometry)
+                mount = self._volume_driver(reader).open(reader, geometry)
                 yield mount
             except DiskError:
                 raise
@@ -71,6 +81,10 @@ class FilesystemDiskMixin:
                 raise DiskError(self._friendly_engine_error(str(exc))) from exc
             finally:
                 if mount is not None:
+                    # SFS and PFS3 open a second handle at their own block size.
+                    close_mount = getattr(mount, "close", None)
+                    if callable(close_mount):
+                        close_mount()
                     ffs = getattr(mount, "_ffs", None)
                     unified = getattr(ffs, "_d", None)
                     disc_image = getattr(unified, "_disc_image", None)
@@ -84,6 +98,32 @@ class FilesystemDiskMixin:
                             close_disc()
                 reader.close()
 
+    @staticmethod
+    def _volume_driver(reader):
+        """Choose the filing system for a volume that has no partition table.
+
+        A memory card or an emulator hardfile can hold one SFS or PFS3 volume
+        from its first block, just as a floppy holds one FFS volume. Each of
+        them names itself in that block, so the choice is made from the bytes
+        rather than from the file name.
+        """
+        from amiganut.errors import ConfigurationError
+        from amiganut.filesystem import create_filesystem
+
+        signature = reader.read_block(0)[:4] if reader.total_blocks else b""
+        if signature[:3] == b"SFS":
+            name, label = "sfs", "the Smart File System"
+        elif signature[:3] in (b"PFS", b"PDS"):
+            name, label = "pfs3", "the Professional File System"
+        else:
+            return create_filesystem("amigados")
+        try:
+            return create_filesystem(name)
+        except ConfigurationError as exc:
+            raise DiskError(
+                f"This volume uses {label}, which this build cannot open."
+            ) from exc
+
     def refresh_ffs_capabilities(self, session: ImageSession) -> dict:
         """Cache the mounted volume's format and its real name limits.
 
@@ -91,8 +131,12 @@ class FilesystemDiskMixin:
         inspected, compared and repaired in the hex editor. A failure here
         therefore records empty capabilities and a warning rather than making
         the whole session unopenable.
+
+        A partition is described the same way once it is chosen, because the
+        partitions of one drive can hold different filing systems with
+        different name limits.
         """
-        if session.kind not in {"ffs", "ofs"}:
+        if not self.mountable(session):
             session.ffs_capabilities = {}
             return {}
         try:
@@ -100,10 +144,13 @@ class FilesystemDiskMixin:
                 capabilities = capabilities_from_mount(mount).to_dict()
         except (DiskError, TypeError) as exc:
             session.ffs_capabilities = {}
-            self._append_warning(
-                session,
-                f"The filing-system capabilities could not be read: {exc}",
-            )
+            # A partition that cannot be read says so when it is listed, and
+            # a warning left on the drive would outlive the choice of partition.
+            if session.kind != "hdf":
+                self._append_warning(
+                    session,
+                    f"The filing-system capabilities could not be read: {exc}",
+                )
             return {}
         session.ffs_capabilities = {
             "format": capabilities["format"],

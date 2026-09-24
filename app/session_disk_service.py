@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import shutil
+import stat
 from pathlib import Path
 
 from .checkpoints import CheckpointError
@@ -15,6 +17,14 @@ from .rom import DEFAULT_BANK_SIZE, bank_count, validate_bank_size
 from .rom_workbench import normalise_project
 from .session_state import session_metadata
 from .dms import DMSError, parse_dms
+
+
+def attached_size(path: Path) -> int:
+    """The capacity of a drive opened in place, which ``stat`` reports as zero."""
+    from amiganut.filesystem.blocks import media_size
+
+    with path.open("rb") as handle:
+        return media_size(handle)
 
 
 class SessionDiskMixin:
@@ -36,7 +46,19 @@ class SessionDiskMixin:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             name = self.safe_filename(metadata["name"])
             path = folder / self.safe_filename(metadata.get("workingFile") or name)
-            if not path.is_file() or path.parent != folder:
+            attached = metadata.get("attachedDevice")
+            if attached:
+                # A drive opened in place comes back only while the session's
+                # link still leads to the drive it was opened on, and always
+                # read-only again, whatever it was when the host stopped.
+                if not path.is_symlink() or path.parent != folder:
+                    raise ValueError
+                real = os.path.realpath(path)
+                if real != os.path.realpath(attached) or not (
+                    os.path.isfile(real) or stat.S_ISBLK(os.stat(real).st_mode)
+                ):
+                    raise ValueError
+            elif not path.is_file() or path.parent != folder:
                 raise ValueError
             descriptor_name = metadata.get("descriptorName")
             descriptor_file = metadata.get("descriptorFile")
@@ -119,6 +141,7 @@ class SessionDiskMixin:
                     else None
                 ),
                 owner_id=metadata.get("ownerId"),
+                attached_device=str(attached) if attached else None,
                 warnings=self._normalise_warnings(
                     [str(warning) for warning in metadata.get("warnings", [])]
                 ),
@@ -138,7 +161,7 @@ class SessionDiskMixin:
                 session.scp_export_path = None
             if session.kind == "dms":
                 session.dms = parse_dms(path.read_bytes())
-            elif session.kind in {"ffs", "ofs"} and not session.ffs_capabilities:
+            elif self.mountable(session) and not session.ffs_capabilities:
                 self.refresh_ffs_capabilities(session)
             self._normalise_hardfile_dat_size(session)
         except (OSError, KeyError, ValueError, json.JSONDecodeError, DMSError) as exc:
@@ -374,6 +397,10 @@ class SessionDiskMixin:
         kickfs = self.kickfs_details(session) if session.kind == "kickfs" else None
         image_stat = session.path.stat()
         image_size = image_stat.st_size
+        revision = f"{image_size:x}-{image_stat.st_mtime_ns:x}"
+        if session.attached_device:
+            image_size = attached_size(session.path)
+            revision = f"{image_size:x}-drive-{session.device_revision:x}"
         file_policy = session_name_policy(session)
         partition_policy = target_name_policy("hdf", item_type="partition")
         return {
@@ -381,7 +408,7 @@ class SessionDiskMixin:
             "name": session.name,
             "kind": session.kind,
             "size": image_size,
-            "revision": f"{image_size:x}-{image_stat.st_mtime_ns:x}",
+            "revision": revision,
             "hardDisk": self.is_bare_hard_drive(session, image_size),
             "dirty": session.dirty,
             "hasDescriptor": bool(session.descriptor_path),
@@ -396,8 +423,14 @@ class SessionDiskMixin:
                 or session.hfe_read_only
                 or session.scp_read_only
                 or bool(kickfs and kickfs["readOnly"])
+                or bool(session.attached_device and not session.device_writes)
             ),
-            "exportFormats": self.export_formats(session),
+            "attachedDrive": ({
+                "device": session.attached_device,
+                "writesAllowed": session.device_writes,
+                "writable": os.access(session.attached_device, os.W_OK),
+            } if session.attached_device else None),
+            "exportFormats": [] if session.attached_device else self.export_formats(session),
             "rom": ({
                 "bankSize": session.rom_bank_size,
                 "bankCount": bank_count(image_size, session.rom_bank_size),

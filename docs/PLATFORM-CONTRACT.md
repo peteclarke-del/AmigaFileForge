@@ -71,6 +71,21 @@ and restart routes do not exist in the web host, so a browser on another
 computer cannot start an installation on the server. The web host is always
 sent to the release page.
 
+Platform contract version 9 records opening a USB-attached drive in place,
+`attached-drive-access`. Listing drives, opening one and switching writes on
+are desktop routes, because the drive is attached to the machine running the
+host and a browser elsewhere has no business reaching it. Once open, the drive
+is an ordinary session: browsing, copying, deleting and validating go through
+the shared services. What differs is policy held in the shared session, not in
+the adapter. The session starts read-only, has no undo, and refuses whole-image
+operations such as download, conversion and the hex editor. Copying the drive
+to an image file is a desktop route of its own: it streams from the drive to a
+path on the host rather than building the result in the working folder and
+handing it to the page, which a drive of many gigabytes would not survive.
+Copying the drive onto another attached drive is a desktop route too. Its
+target is chosen from the attached-drive list, never from a path, and the
+request has to name it a second time as confirmation before it is erased.
+
 ## Storage and security
 
 The web host uses the configured Docker work directory and browser-owner

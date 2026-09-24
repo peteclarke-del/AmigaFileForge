@@ -1,12 +1,26 @@
 """The AmigaDOS Old and Fast File Systems.
 
-One class covers ``DOS\\0`` to ``DOS\\5`` because the variants differ in only
-three decisions: whether data blocks carry a 24-byte header (OFS) or not
+One class covers ``DOS\\0`` to ``DOS\\7`` because the variants differ in only
+four decisions: whether data blocks carry a 24-byte header (OFS) or not
 (FFS), whether name hashing folds the accented Latin-1 letters (international
-mode), and whether a directory keeps a cache block chain (directory cache).
-Each of those is a single branch rather than a separate implementation, and
-keeping them together is what makes a copy between an OFS floppy and an FFS
-partition an ordinary operation instead of a conversion.
+mode), whether a directory keeps a cache block chain (directory cache,
+``DOS\\4`` and ``DOS\\5``), and whether names may run to 107 characters
+(long names, ``DOS\\6`` and ``DOS\\7``, from the FFS of AmigaOS 3.1.4 and
+3.2). Each of those is a single branch rather than a separate implementation,
+and keeping them together is what makes a copy between an OFS floppy and an
+FFS partition an ordinary operation instead of a conversion.
+
+The directory cache is a second copy of what each directory's header blocks
+say. The Amiga's ``List`` and Workbench read the cache and never the hash
+chains, so every change here that touches a header also rewrites the record
+for it in its parent's cache. Reading goes through the hash chains, which are
+the primary structure, and ``validate`` compares the two.
+
+The layout of the long-name variants follows the description in amitools
+(Christian Vogelgsang, GPL), which is used only as a reference for the
+on-disk format; no code is taken from it. Name and comment share one area of
+the header block there, and a comment that no longer fits beside a long name
+moves to a comment block of its own.
 
 Paths use AmigaDOS syntax. The volume root is an empty path or ``:``; nested
 entries are separated by ``/``. Names may contain full stops, which is why the
@@ -29,7 +43,9 @@ from ..file import (
 )
 from .blocks import (
     DOS_TYPES,
+    LONG_NAME_AREA,
     MAX_COMMENT,
+    MAX_LONG_NAME,
     MAX_NAME,
     RESERVED_BLOCKS,
     ST_FILE,
@@ -38,23 +54,29 @@ from .blocks import (
     ST_ROOT,
     ST_SOFTLINK,
     ST_USERDIR,
+    T_COMMENT,
     T_DATA,
+    T_DIRCACHE,
     T_HEADER,
     T_LIST,
     WRITABLE_FORMATS,
     BlockReader,
+    DirCacheRecord,
     Geometry,
     apply_checksum,
     hash_name,
     is_dircache,
     is_ffs,
     is_international,
+    is_long_names,
     long_at,
     names_match,
+    pack_dircache_records,
     put_long,
     put_signed_long,
     read_bstr,
     signed_long_at,
+    unpack_dircache_records,
     verify_checksum,
     write_bstr,
 )
@@ -71,6 +93,12 @@ OFF_CHECKSUM = 20
 OFF_HASH_TABLE = 24
 
 ILLEGAL_NAME_CHARACTERS = set(':/\\')
+
+
+#: Between a bitmap held one byte per block (0 or 1) and the same bits as the
+#: characters "0" and "1", which ``int`` and ``format`` convert in C.
+_TO_BINARY = bytes.maketrans(b"\x00\x01", b"01")
+_FROM_BINARY = bytes.maketrans(b"01", b"\x00\x01")
 
 
 def _tail(block_size: int, back: int) -> int:
@@ -127,13 +155,17 @@ def join_path(parts) -> str:
     return "/".join(parts)
 
 
-def validate_name(name: str) -> str:
-    """Reject a name AmigaDOS could not store, before anything is written."""
+def validate_name(name: str, limit: int = MAX_NAME) -> str:
+    """Reject a name AmigaDOS could not store, before anything is written.
+
+    ``limit`` is 30 on every volume except the long-name variants, which
+    allow 107 for files and directories. A volume name stays at 30 there too.
+    """
     text = str(name or "").strip()
     if not text:
         raise DataError("A name cannot be empty.")
-    if len(text) > MAX_NAME:
-        raise DataError(f"An Amiga name can hold at most {MAX_NAME} characters.")
+    if len(text) > limit:
+        raise DataError(f"An Amiga name can hold at most {limit} characters.")
     if any(character in ILLEGAL_NAME_CHARACTERS for character in text):
         raise DataError("An Amiga name cannot contain : / or \\.")
     if any(ord(character) < 32 for character in text):
@@ -142,7 +174,7 @@ def validate_name(name: str) -> str:
 
 
 class AmigaDOSVolume:
-    """A mounted OFS or FFS volume."""
+    """A mounted OFS or FFS volume, in any of the variants ``DOS\\0`` to ``DOS\\7``."""
 
     def __init__(self, reader: BlockReader, geometry: Geometry | None = None):
         self.reader = reader
@@ -165,6 +197,8 @@ class AmigaDOSVolume:
         self.ffs = is_ffs(self.dos_type)
         self.international = is_international(self.dos_type)
         self.dircache = is_dircache(self.dos_type)
+        self.long_names = is_long_names(self.dos_type)
+        self.name_limit = MAX_LONG_NAME if self.long_names else MAX_NAME
         self.read_only = self.format not in WRITABLE_FORMATS or not reader.writable
         self.data_capacity = self.block_size if self.ffs else self.block_size - OFS_DATA_HEADER
         self.root_block = self._locate_root()
@@ -173,6 +207,8 @@ class AmigaDOSVolume:
         self._bitmap: bytearray | None = None
         self._bitmap_blocks: list[int] = []
         self._dirty_bitmap = False
+        # Bitmap blocks whose bits have changed since they were last written.
+        self._dirty_pages: set[int] = set()
 
     # ---- geometry ----------------------------------------------------
     def _locate_root(self) -> int:
@@ -275,42 +311,71 @@ class AmigaDOSVolume:
             extension = long_at(page, self.block_size - 4)
         self._bitmap_blocks = pages
         covered = self.total_blocks - self.reserved
-        bits = bytearray(covered)
-        for page_index, page_block in enumerate(pages):
+        # One byte per block, 1 when free. Each bitmap long holds 32 blocks
+        # with the first in its lowest bit, so a long is decoded by writing it
+        # out in binary and reversing it, which keeps the work in C rather
+        # than in a loop over every bit of a drive of many gigabytes.
+        pieces = []
+        longs = self.block_size // 4 - 1
+        for page_block in pages:
             page = self.reader.read_block(page_block)
-            longs = self.block_size // 4 - 1
             for long_index in range(longs):
                 value = long_at(page, 4 + long_index * 4)
-                for bit in range(32):
-                    position = page_index * longs * 32 + long_index * 32 + bit
-                    if position >= covered:
-                        break
-                    bits[position] = 1 if value & (1 << bit) else 0
+                pieces.append(format(value, "032b")[::-1])
+        bits = bytearray("".join(pieces).encode("ascii").translate(_FROM_BINARY)[:covered])
+        if len(bits) < covered:
+            bits.extend(bytes(covered - len(bits)))
         self._bitmap = bits
         return bits
+
+    def _page_of(self, index: int) -> int:
+        return index // ((self.block_size // 4 - 1) * 32)
 
     def _store_bitmap(self) -> None:
         if self._bitmap is None or not self._dirty_bitmap:
             return
         bits = self._bitmap
         longs = self.block_size // 4 - 1
-        for page_index, page_block in enumerate(self._bitmap_blocks):
+        per_page = longs * 32
+        # Only the bitmap blocks that changed are rewritten. Rewriting every
+        # one on each flush made copying many files onto a large partition
+        # take longer the larger the partition was.
+        pages = sorted(self._dirty_pages) if self._dirty_pages else range(len(self._bitmap_blocks))
+        for page_index in pages:
+            if not 0 <= page_index < len(self._bitmap_blocks):
+                continue
+            start = page_index * per_page
+            chunk = bytes(bits[start : start + per_page]).ljust(per_page, b"\0")
+            text = chunk.translate(_TO_BINARY).decode("ascii")
             page = bytearray(self.block_size)
             for long_index in range(longs):
-                value = 0
-                for bit in range(32):
-                    position = page_index * longs * 32 + long_index * 32 + bit
-                    if position < len(bits) and bits[position]:
-                        value |= 1 << bit
-                put_long(page, 4 + long_index * 4, value)
+                piece = text[long_index * 32 : long_index * 32 + 32]
+                put_long(page, 4 + long_index * 4, int(piece[::-1], 2))
             put_long(page, 0, 0)
             apply_checksum(page, 0)
-            self.reader.write_block(page_block, bytes(page))
+            self.reader.write_block(self._bitmap_blocks[page_index], bytes(page))
+        self._dirty_pages.clear()
         self._dirty_bitmap = False
+        if self.long_names:
+            self._store_used_count()
+
+    def _store_used_count(self) -> None:
+        """Keep the long-name root block's count of blocks in use current.
+
+        The long-name variants record the DOS type at 16 bytes from the end of
+        the root block and the number of allocated blocks at 44 bytes from the
+        end, both fields that the older variants leave unused.
+        """
+        bits = self._load_bitmap()
+        root = bytearray(self.reader.read_block(self.root_block))
+        used = len(bits) - bits.count(1)
+        if long_at(root, _tail(self.block_size, 44)) != used:
+            put_long(root, _tail(self.block_size, 44), used)
+            self.reader.write_block(self.root_block, bytes(apply_checksum(root)))
 
     def _free_block_count(self) -> int:
         try:
-            return sum(self._load_bitmap())
+            return self._load_bitmap().count(1)
         except DataError:
             return 0
 
@@ -334,6 +399,7 @@ class AmigaDOSVolume:
                 if 0 <= candidate < len(bits) and bits[candidate]:
                     bits[candidate] = 0
                     self._dirty_bitmap = True
+                    self._dirty_pages.add(self._page_of(candidate))
                     return candidate + self.reserved
         raise DataError("The volume is full.")
 
@@ -343,6 +409,7 @@ class AmigaDOSVolume:
         if 0 <= index < len(bits):
             bits[index] = 1
             self._dirty_bitmap = True
+            self._dirty_pages.add(self._page_of(index))
 
     # ---- block helpers -----------------------------------------------
     def _require_writable(self) -> None:
@@ -368,7 +435,298 @@ class AmigaDOSVolume:
         return data
 
     def _entry_name(self, block: int) -> str:
-        return read_bstr(self._read_header(block), _tail(self.block_size, 80), MAX_NAME)
+        return self._header_name(self._read_header(block), block)
+
+    # ---- header layout -----------------------------------------------
+    # The long-name variants rearrange the tail of every file and directory
+    # header: a 112-byte area 184 bytes from the end holds the name and then
+    # the comment, each with a length byte; the pointer to an overflow comment
+    # block sits 72 bytes from the end, and the date moves to 60 bytes from
+    # the end. The root block keeps the classic layout on every variant.
+    def _long_layout(self, block: int) -> bool:
+        return self.long_names and block != self.root_block
+
+    def _date_offset(self, block: int) -> int:
+        return _tail(self.block_size, 60 if self._long_layout(block) else 92)
+
+    def _header_name(self, header: bytes, block: int) -> str:
+        if not self._long_layout(block):
+            return read_bstr(header, _tail(self.block_size, 80), MAX_NAME)
+        base = _tail(self.block_size, 184)
+        length = min(header[base], MAX_LONG_NAME)
+        return header[base + 1 : base + 1 + length].decode("latin-1")
+
+    def _inline_comment(self, header: bytes) -> bytes:
+        """Return the comment stored beside a long name, which may be empty."""
+        base = _tail(self.block_size, 184)
+        name_length = min(header[base], MAX_LONG_NAME)
+        at = base + 1 + name_length
+        length = min(header[at], LONG_NAME_AREA - 2 - name_length)
+        return header[at + 1 : at + 1 + length]
+
+    def _comment_block_of(self, header: bytes, block: int) -> int:
+        """Return the overflow comment block of a long-name header, or 0.
+
+        The pointer is honoured only when no comment is stored inline and the
+        block it names really is this header's comment block, so a stray value
+        can never make a delete give away a block that belongs to something
+        else.
+        """
+        if not self._long_layout(block) or self._inline_comment(header):
+            return 0
+        pointer = long_at(header, _tail(self.block_size, 72))
+        if not self.reserved <= pointer < self.total_blocks:
+            return 0
+        data = self.reader.read_block(pointer)
+        if (
+            long_at(data, OFF_TYPE) != T_COMMENT
+            or long_at(data, 8) != block
+            or not verify_checksum(data)
+        ):
+            return 0
+        return pointer
+
+    def _header_comment(self, header: bytes, block: int) -> str:
+        if block == self.root_block:
+            return ""
+        if not self._long_layout(block):
+            return read_bstr(header, _tail(self.block_size, 184), MAX_COMMENT)
+        inline = self._inline_comment(header)
+        if inline:
+            return inline.decode("latin-1")
+        pointer = self._comment_block_of(header, block)
+        if not pointer:
+            return ""
+        return read_bstr(self.reader.read_block(pointer), 24, MAX_COMMENT)
+
+    def _put_name_and_comment(
+        self, header: bytearray, block: int, name: str, comment: str
+    ) -> None:
+        """Store a name and comment in the header being prepared for ``block``.
+
+        On a long-name volume a comment that does not fit beside the name is
+        written to a comment block of its own, allocated here near the header,
+        and a comment that fits again gives that block back. The caller writes
+        the header afterwards.
+        """
+        if not self._long_layout(block):
+            write_bstr(header, _tail(self.block_size, 80), name, MAX_NAME)
+            write_bstr(header, _tail(self.block_size, 184), comment, MAX_COMMENT)
+            return
+        encoded_name = name.encode("latin-1", "replace")[:MAX_LONG_NAME]
+        encoded_comment = comment.encode("latin-1", "replace")[:MAX_COMMENT]
+        pointer = self._comment_block_of(bytes(header), block)
+        area = bytearray(LONG_NAME_AREA)
+        area[0] = len(encoded_name)
+        area[1 : 1 + len(encoded_name)] = encoded_name
+        if 2 + len(encoded_name) + len(encoded_comment) <= LONG_NAME_AREA:
+            at = 1 + len(encoded_name)
+            area[at] = len(encoded_comment)
+            area[at + 1 : at + 1 + len(encoded_comment)] = encoded_comment
+            if pointer:
+                self._release(pointer)
+            pointer = 0
+        else:
+            if not pointer:
+                pointer = self._allocate(block)
+            overflow = bytearray(self.block_size)
+            put_long(overflow, OFF_TYPE, T_COMMENT)
+            put_long(overflow, OFF_HEADER_KEY, pointer)
+            put_long(overflow, 8, block)
+            write_bstr(overflow, 24, comment, MAX_COMMENT)
+            self.reader.write_block(pointer, bytes(apply_checksum(overflow)))
+        base = _tail(self.block_size, 184)
+        header[base : base + LONG_NAME_AREA] = area
+        put_long(header, _tail(self.block_size, 72), pointer)
+
+    # ---- directory cache ---------------------------------------------
+    # Each directory on a DOS\4 or DOS\5 volume, the root included, points
+    # from the long 8 bytes before the end of its header to a chain of cache
+    # blocks. A cache block carries its own number, the directory it belongs
+    # to, a record count and the next block of the chain, then the records.
+    def _cache_record(self, block: int, header: bytes | None = None) -> DirCacheRecord:
+        """Build the cache record that describes the header at ``block``."""
+        if header is None:
+            header = self._read_header(block)
+        secondary = signed_long_at(header, _tail(self.block_size, 4))
+        base = self._date_offset(block)
+        uid, gid = struct.unpack_from(">HH", header, _tail(self.block_size, 196))
+        directory = secondary in (ST_ROOT, ST_USERDIR, ST_LINKDIR)
+        return DirCacheRecord(
+            header=block,
+            size=0 if directory else long_at(header, _tail(self.block_size, 188)),
+            protection=long_at(header, _tail(self.block_size, 192)),
+            uid=uid,
+            gid=gid,
+            days=long_at(header, base),
+            mins=long_at(header, base + 4),
+            ticks=long_at(header, base + 8),
+            secondary_type=((secondary + 128) & 0xFF) - 128,
+            name=self._header_name(header, block).encode("latin-1"),
+            comment=self._header_comment(header, block).encode("latin-1"),
+        )
+
+    def _load_cache(self, directory: int) -> list[list]:
+        """Return a directory's cache chain as ``[block, records, raw]`` lists."""
+        header = self._read_header(directory)
+        chain: list[list] = []
+        seen: set[int] = set()
+        current = long_at(header, _tail(self.block_size, 8))
+        while current:
+            if current in seen or not self.reserved <= current < self.total_blocks:
+                raise DataError("A directory-cache chain is damaged.")
+            seen.add(current)
+            raw = self.reader.read_block(current)
+            if long_at(raw, OFF_TYPE) != T_DIRCACHE or not verify_checksum(raw):
+                raise DataError(f"Block {current} is not a valid directory-cache block.")
+            records = unpack_dircache_records(raw, long_at(raw, 12))
+            chain.append([current, records, raw])
+            current = long_at(raw, 16)
+        return chain
+
+    def _cache_capacity(self) -> int:
+        return self.block_size - 24
+
+    def _edit_cache(
+        self,
+        directory: int,
+        *,
+        drop: int | None = None,
+        record: DirCacheRecord | None = None,
+    ) -> None:
+        """Remove, replace or add one record in a directory's cache.
+
+        ``drop`` removes the record for that header block. ``record`` replaces
+        the record with the same header block, in place when it still fits,
+        and otherwise goes into the first block with room, a new block being
+        added to the end of the chain when none has any. A block left empty is
+        released unless it is the only one, because every directory keeps at
+        least one. Only the blocks whose contents changed are written.
+        """
+        if not self.dircache:
+            return
+        chain = self._load_cache(directory)
+        capacity = self._cache_capacity()
+
+        def used(records) -> int:
+            return sum(item.packed_size for item in records)
+
+        key = record.header if record is not None else drop
+        pending = record
+        if key is not None:
+            for entry in chain:
+                records = entry[1]
+                for index, existing in enumerate(records):
+                    if existing.header != key:
+                        continue
+                    if pending is not None and (
+                        used(records) - existing.packed_size + pending.packed_size
+                        <= capacity
+                    ):
+                        records[index] = pending
+                        pending = None
+                    else:
+                        del records[index]
+                    break
+                else:
+                    continue
+                break
+        if pending is not None:
+            for entry in chain:
+                if used(entry[1]) + pending.packed_size <= capacity:
+                    entry[1].append(pending)
+                    break
+            else:
+                near = chain[-1][0] if chain else directory
+                chain.append([self._allocate(near), [pending], None])
+        if not chain:
+            chain.append([self._allocate(directory), [], None])
+        for entry in list(chain):
+            if not entry[1] and len(chain) > 1:
+                chain.remove(entry)
+                self._release(entry[0])
+        self._commit_cache(directory, chain)
+
+    def _commit_cache(self, directory: int, chain: list[list]) -> None:
+        """Write a directory's cache chain and point its header at the first block."""
+        for position in range(len(chain) - 1, -1, -1):
+            block, records, original = chain[position]
+            following = chain[position + 1][0] if position + 1 < len(chain) else 0
+            raw = bytearray(self.block_size)
+            put_long(raw, OFF_TYPE, T_DIRCACHE)
+            put_long(raw, OFF_HEADER_KEY, block)
+            put_long(raw, 8, directory)
+            put_long(raw, 12, len(records))
+            put_long(raw, 16, following)
+            raw[24:] = pack_dircache_records(records, self.block_size)
+            apply_checksum(raw)
+            if original != bytes(raw):
+                self.reader.write_block(block, bytes(raw))
+        header = bytearray(self._read_header(directory))
+        first = chain[0][0] if chain else 0
+        if long_at(header, _tail(self.block_size, 8)) != first:
+            put_long(header, _tail(self.block_size, 8), first)
+            self.reader.write_block(directory, bytes(apply_checksum(header)))
+
+    def _sync_cache_record(self, block: int) -> None:
+        """Bring the record for ``block`` in its parent's cache up to date."""
+        if not self.dircache or block == self.root_block:
+            return
+        header = self._read_header(block)
+        parent = long_at(header, _tail(self.block_size, 12))
+        self._edit_cache(parent, record=self._cache_record(block, header))
+
+    def rebuild_dircache(self) -> int:
+        """Rewrite every directory's cache from its hash chains.
+
+        This repairs a ``DOS\\4`` or ``DOS\\5`` volume whose caches went stale,
+        for example because an older tool changed it without maintaining
+        them. Existing cache blocks are reused where the chain is readable;
+        a chain that is damaged is abandoned, and the blocks it held are left
+        for a validation pass rather than freed on a guess. Returns the number
+        of directories whose cache was written.
+        """
+        self._require_writable()
+        if not self.dircache:
+            return 0
+        capacity = self._cache_capacity()
+        rewritten = 0
+        pending = [self.root_block]
+        while pending:
+            directory = pending.pop()
+            records = []
+            for child in self._chain_blocks(directory):
+                header = self._read_header(child)
+                records.append(self._cache_record(child, header))
+                if signed_long_at(header, _tail(self.block_size, 4)) == ST_USERDIR:
+                    pending.append(child)
+            try:
+                old = self._load_cache(directory)
+            except DataError:
+                old = []
+            chain: list[list] = []
+            spare = [(entry[0], entry[2]) for entry in old]
+            current: list[DirCacheRecord] = []
+            groups: list[list[DirCacheRecord]] = []
+            for record in records:
+                if sum(item.packed_size for item in current) + record.packed_size > capacity:
+                    groups.append(current)
+                    current = []
+                current.append(record)
+            groups.append(current)
+            for group in groups:
+                if spare:
+                    block, raw = spare.pop(0)
+                else:
+                    near = chain[-1][0] if chain else directory
+                    block, raw = self._allocate(near), None
+                chain.append([block, group, raw])
+            for block, _raw in spare:
+                self._release(block)
+            self._commit_cache(directory, chain)
+            rewritten += 1
+        self._store_bitmap()
+        return rewritten
 
     def _secondary_type(self, block: int) -> int:
         return signed_long_at(self._read_header(block), _tail(self.block_size, 4))
@@ -454,7 +812,7 @@ class AmigaDOSVolume:
         prefix = join_path(parts)
         for candidate in self._chain_blocks(block):
             child = self._read_header(candidate)
-            name = read_bstr(child, _tail(self.block_size, 80), MAX_NAME)
+            name = self._header_name(child, candidate)
             child_secondary = signed_long_at(child, _tail(self.block_size, 4))
             is_dir = child_secondary in (ST_USERDIR, ST_LINKDIR)
             yield Entry(
@@ -530,26 +888,39 @@ class AmigaDOSVolume:
     def amiga_meta(self, path: str) -> AmigaMeta:
         block, _parts = self._resolve(path)
         header = self._read_header(block)
-        protection = long_at(header, _tail(self.block_size, 192))
-        comment = read_bstr(header, _tail(self.block_size, 184), MAX_COMMENT)
-        base = _tail(self.block_size, 92)
+        base = self._date_offset(block)
         stamp = datestamp_to_datetime(
             long_at(header, base), long_at(header, base + 4), long_at(header, base + 8)
         )
+        if block == self.root_block:
+            # The root block keeps bitmap pointers where an entry keeps its
+            # protection and comment, so it has neither to report.
+            return AmigaMeta(protection=DEFAULT_PROTECTION, comment="", datestamp=stamp)
+        protection = long_at(header, _tail(self.block_size, 192))
+        comment = self._header_comment(header, block)
         return AmigaMeta(protection=protection, comment=comment, datestamp=stamp)
 
     def set_amiga_meta(self, path: str, meta: AmigaMeta) -> None:
         self._require_writable()
         block, _parts = self._resolve(path)
         header = bytearray(self._read_header(block))
-        put_long(header, _tail(self.block_size, 192), int(meta.protection) & 0xFFFFFFFF)
+        if block == self.root_block:
+            # Only the date applies to the root: the offsets that hold an
+            # entry's protection and comment hold bitmap pointers here.
+            if meta.datestamp is not None:
+                self._stamp(header, self._date_offset(block), meta.datestamp)
+                self.reader.write_block(block, bytes(apply_checksum(header)))
+            return
         comment = str(meta.comment or "")
         if len(comment) > MAX_COMMENT:
             raise DataError(f"A comment can hold at most {MAX_COMMENT} characters.")
-        write_bstr(header, _tail(self.block_size, 184), comment, MAX_COMMENT)
+        put_long(header, _tail(self.block_size, 192), int(meta.protection) & 0xFFFFFFFF)
+        self._put_name_and_comment(header, block, self._header_name(header, block), comment)
         if meta.datestamp is not None:
-            self._stamp(header, _tail(self.block_size, 92), meta.datestamp)
+            self._stamp(header, self._date_offset(block), meta.datestamp)
         self.reader.write_block(block, bytes(apply_checksum(header)))
+        self._sync_cache_record(block)
+        self._store_bitmap()
 
     def access(self, path: str) -> Access:
         return self.amiga_meta(path).access
@@ -572,8 +943,10 @@ class AmigaDOSVolume:
         self._require_writable()
         block, _parts = self._resolve(path)
         header = bytearray(self._read_header(block))
-        self._stamp(header, _tail(self.block_size, 92), moment)
+        self._stamp(header, self._date_offset(block), moment)
         self.reader.write_block(block, bytes(apply_checksum(header)))
+        self._sync_cache_record(block)
+        self._store_bitmap()
 
     # ---- writing -----------------------------------------------------
     def mkdir(self, path: str) -> int:
@@ -581,7 +954,7 @@ class AmigaDOSVolume:
         parts = split_path(path)
         if not parts:
             raise DataError("The volume root already exists.")
-        name = validate_name(parts[-1])
+        name = validate_name(parts[-1], self.name_limit)
         parent_block, _ = self._resolve(join_path(parts[:-1]))
         if self._find_in_directory(parent_block, name) is not None:
             raise DataError(f"{path} already exists.")
@@ -590,11 +963,13 @@ class AmigaDOSVolume:
         put_long(header, OFF_TYPE, T_HEADER)
         put_long(header, OFF_HEADER_KEY, block)
         put_long(header, _tail(self.block_size, 192), DEFAULT_PROTECTION)
-        write_bstr(header, _tail(self.block_size, 80), name, MAX_NAME)
-        self._stamp(header, _tail(self.block_size, 92))
+        self._put_name_and_comment(header, block, name, "")
+        self._stamp(header, self._date_offset(block))
         put_long(header, _tail(self.block_size, 12), parent_block)
         put_signed_long(header, _tail(self.block_size, 4), ST_USERDIR)
         self.reader.write_block(block, bytes(apply_checksum(header)))
+        # A new directory starts with one empty cache block of its own.
+        self._edit_cache(block)
         self._link_into(parent_block, block, name)
         self._store_bitmap()
         return block
@@ -605,7 +980,10 @@ class AmigaDOSVolume:
         parts = split_path(path)
         if not parts:
             raise DataError("A file needs a name.")
-        name = validate_name(parts[-1])
+        name = validate_name(parts[-1], self.name_limit)
+        source_comment = str((meta.comment if meta else "") or "")
+        if len(source_comment) > MAX_COMMENT:
+            raise DataError(f"A comment can hold at most {MAX_COMMENT} characters.")
         parent_block, _ = self._resolve(join_path(parts[:-1]))
         existing = self._find_in_directory(parent_block, name)
         preserved = None
@@ -615,10 +993,13 @@ class AmigaDOSVolume:
         payload = bytes(data)
         needed = (len(payload) + self.data_capacity - 1) // self.data_capacity
         extensions = max(0, (needed - 1) // self.hash_table_size)
-        if needed + extensions + 1 > self._free_block_count():
+        # One more block may be needed for the parent's cache on a directory
+        # cache volume, or for an overflow comment on a long-name volume.
+        spare = 1 if self.dircache or self.long_names else 0
+        if needed + extensions + 1 + spare > self._free_block_count():
             raise DataError(
-                f"{len(payload):,} bytes need {needed + extensions + 1:,} blocks but only "
-                f"{self._free_block_count():,} are free."
+                f"{len(payload):,} bytes need {needed + extensions + 1 + spare:,} blocks "
+                f"but only {self._free_block_count():,} are free."
             )
         header_block = self._allocate(parent_block)
         data_blocks = [self._allocate(header_block) for _ in range(needed)]
@@ -663,14 +1044,13 @@ class AmigaDOSVolume:
                     int(source.protection) & 0xFFFFFFFF if source else DEFAULT_PROTECTION,
                 )
                 put_long(raw, _tail(self.block_size, 188), len(payload))
-                if source and source.comment:
-                    write_bstr(raw, _tail(self.block_size, 184), source.comment, MAX_COMMENT)
+                comment = str((source.comment if source else "") or "")[:MAX_COMMENT]
+                self._put_name_and_comment(raw, block, name, comment)
                 self._stamp(
                     raw,
-                    _tail(self.block_size, 92),
+                    self._date_offset(block),
                     source.datestamp if source and source.datestamp else None,
                 )
-                write_bstr(raw, _tail(self.block_size, 80), name, MAX_NAME)
                 put_long(raw, _tail(self.block_size, 12), parent_block)
             else:
                 put_long(raw, _tail(self.block_size, 12), header_block)
@@ -694,8 +1074,11 @@ class AmigaDOSVolume:
         put_long(child, _tail(self.block_size, 16), head)
         self.reader.write_block(child_block, bytes(apply_checksum(child)))
         put_long(parent, OFF_HASH_TABLE + slot * 4, child_block)
-        self._stamp(parent, _tail(self.block_size, 92))
+        self._stamp(parent, self._date_offset(parent_block))
         self.reader.write_block(parent_block, bytes(apply_checksum(parent)))
+        self._edit_cache(parent_block, record=self._cache_record(child_block))
+        # The parent's date changed, and its own parent caches that date.
+        self._sync_cache_record(parent_block)
 
     def _unlink(self, parent_block: int, child_block: int, name: str) -> None:
         slot = hash_name(name, self.international, self.hash_table_size)
@@ -704,23 +1087,24 @@ class AmigaDOSVolume:
         successor = long_at(self._read_header(child_block), _tail(self.block_size, 16))
         if head == child_block:
             put_long(parent, OFF_HASH_TABLE + slot * 4, successor)
-            self._stamp(parent, _tail(self.block_size, 92))
-            self.reader.write_block(parent_block, bytes(apply_checksum(parent)))
-            return
-        previous = head
-        seen = set()
-        while previous:
-            if previous in seen:
-                raise DataError("A directory hash chain is damaged.")
-            seen.add(previous)
-            block = bytearray(self._read_header(previous))
-            following = long_at(block, _tail(self.block_size, 16))
-            if following == child_block:
-                put_long(block, _tail(self.block_size, 16), successor)
-                self.reader.write_block(previous, bytes(apply_checksum(block)))
-                return
-            previous = following
-        raise DataError(f"{name} is not linked into its parent directory.")
+        else:
+            previous = head
+            seen = set()
+            while True:
+                if not previous or previous in seen:
+                    raise DataError(f"{name} is not linked into its parent directory.")
+                seen.add(previous)
+                block = bytearray(self._read_header(previous))
+                following = long_at(block, _tail(self.block_size, 16))
+                if following == child_block:
+                    put_long(block, _tail(self.block_size, 16), successor)
+                    self.reader.write_block(previous, bytes(apply_checksum(block)))
+                    break
+                previous = following
+        self._stamp(parent, self._date_offset(parent_block))
+        self.reader.write_block(parent_block, bytes(apply_checksum(parent)))
+        self._edit_cache(parent_block, drop=child_block)
+        self._sync_cache_record(parent_block)
 
     def remove(self, path: str, *, recursive: bool = False) -> None:
         self._require_writable()
@@ -736,6 +1120,15 @@ class AmigaDOSVolume:
                 raise DataError(f"{path} is not empty.")
             for child in children:
                 self.remove(child.path, recursive=True)
+            if self.dircache:
+                try:
+                    cache = self._load_cache(block)
+                except DataError:
+                    # A damaged chain is left allocated for validation to
+                    # report, rather than freeing blocks it may not own.
+                    cache = []
+                for entry in cache:
+                    self._release(entry[0])
         else:
             if self.access(path).locked:
                 raise DataError(f"{path} is protected against deletion.")
@@ -746,7 +1139,11 @@ class AmigaDOSVolume:
                 following = long_at(self._read_header(current), _tail(self.block_size, 8))
                 self._release(current)
                 current = following
-        self._unlink(parent_block, block, self._entry_name(block))
+        header = self._read_header(block)
+        comment_block = self._comment_block_of(header, block)
+        self._unlink(parent_block, block, self._header_name(header, block))
+        if comment_block:
+            self._release(comment_block)
         self._release(block)
         self._store_bitmap()
 
@@ -756,19 +1153,24 @@ class AmigaDOSVolume:
         destination_parts = split_path(destination)
         if not source_parts or not destination_parts:
             raise DataError("Both a source and a destination name are required.")
-        name = validate_name(destination_parts[-1])
+        name = validate_name(destination_parts[-1], self.name_limit)
         block, _ = self._resolve(source)
         old_parent, _ = self._resolve(join_path(source_parts[:-1]))
         new_parent, _ = self._resolve(join_path(destination_parts[:-1]))
-        if self._find_in_directory(new_parent, name) is not None:
+        clash = self._find_in_directory(new_parent, name)
+        if clash is not None and clash != block:
             raise DataError(f"{destination} already exists.")
         self._unlink(old_parent, block, self._entry_name(block))
         header = bytearray(self._read_header(block))
-        write_bstr(header, _tail(self.block_size, 80), name, MAX_NAME)
+        # A longer name can push a long-name volume's comment out to a block
+        # of its own, and a shorter one can bring it back.
+        comment = self._header_comment(header, block)
+        self._put_name_and_comment(header, block, name, comment)
         put_long(header, _tail(self.block_size, 12), new_parent)
         put_long(header, _tail(self.block_size, 16), 0)
         self.reader.write_block(block, bytes(apply_checksum(header)))
         self._link_into(new_parent, block, name)
+        self._store_bitmap()
 
     # ---- boot block --------------------------------------------------
     def boot_option(self) -> int:
@@ -810,14 +1212,22 @@ class AmigaDOSVolume:
                 )
             allocated[block] = owner
 
-        def walk(directory: str) -> None:
+        def walk(directory: str, directory_block: int) -> None:
+            if self.dircache:
+                self._check_cache(directory_block, directory or "the root", problems, claim)
             for entry in self.iter_entries(directory):
                 header = self.reader.read_block(entry.block)
                 if not verify_checksum(header):
                     problems.append(f"{entry.path} has a bad header checksum.")
                 claim(entry.block, entry.path)
+                if self._long_layout(entry.block) and not self._inline_comment(header):
+                    pointer = long_at(header, _tail(self.block_size, 72))
+                    if pointer and self._comment_block_of(header, entry.block) != pointer:
+                        problems.append(f"{entry.path} points to a damaged comment block.")
+                    elif pointer:
+                        claim(pointer, f"the comment of {entry.path}")
                 if entry.is_dir:
-                    walk(entry.path)
+                    walk(entry.path, entry.block)
                     continue
                 if entry.is_link:
                     continue
@@ -837,7 +1247,7 @@ class AmigaDOSVolume:
                     claim(block, entry.path)
 
         try:
-            walk("")
+            walk("", self.root_block)
         except DataError as error:
             problems.append(str(error))
 
@@ -852,7 +1262,62 @@ class AmigaDOSVolume:
                 problems.append(
                     f"Block {block} is used by {owner} but the bitmap marks it free."
                 )
+        if self.long_names and long_at(root, _tail(self.block_size, 16)) == int.from_bytes(
+            self.dos_type, "big"
+        ):
+            used = len(bits) - bits.count(1)
+            recorded = long_at(root, _tail(self.block_size, 44))
+            if recorded != used:
+                problems.append(
+                    f"The root block counts {recorded} blocks in use but the bitmap has {used}."
+                )
         return problems
+
+    def _check_cache(self, directory: int, label: str, problems: list[str], claim) -> None:
+        """Compare one directory's cache with the headers its hash chains reach."""
+        try:
+            chain = self._load_cache(directory)
+        except DataError as error:
+            problems.append(f"The directory cache of {label}: {error}")
+            return
+        if not chain:
+            problems.append(f"No directory cache was found for {label}.")
+            return
+        cached: dict[int, DirCacheRecord] = {}
+        for block, records, raw in chain:
+            claim(block, f"the directory cache of {label}")
+            if long_at(raw, OFF_HEADER_KEY) != block or long_at(raw, 8) != directory:
+                problems.append(
+                    f"Cache block {block} of {label} does not name itself and its directory."
+                )
+            for record in records:
+                if record.header in cached:
+                    problems.append(f"The cache of {label} lists block {record.header} twice.")
+                cached[record.header] = record
+        for child in self._chain_blocks(directory):
+            expected = self._cache_record(child)
+            found = cached.pop(child, None)
+            name = expected.name.decode("latin-1")
+            if found is None:
+                problems.append(f"The cache of {label} has no record for {name}.")
+            elif found != expected:
+                fields = [
+                    field
+                    for field in (
+                        "size", "protection", "uid", "gid", "days", "mins", "ticks",
+                        "secondary_type", "name", "comment",
+                    )
+                    if getattr(found, field) != getattr(expected, field)
+                ]
+                problems.append(
+                    f"The cache of {label} disagrees with the header of {name} "
+                    f"({', '.join(fields)})."
+                )
+        for record in cached.values():
+            problems.append(
+                f"The cache of {label} lists {record.name.decode('latin-1')}, "
+                "which is not in the directory."
+            )
 
     def defragment(self) -> int:
         """Rewrite every file so its data blocks are contiguous again.
@@ -964,6 +1429,9 @@ def format_volume(
             "choose a smaller partition."
         )
     bitmap_blocks = [root_block + 1 + index for index in range(page_count)]
+    # A directory-cache volume starts with one empty cache block for the root,
+    # placed straight after the bitmap.
+    cache_block = root_block + 1 + page_count if is_dircache(dos_type) else 0
 
     root = bytearray(block_size)
     put_long(root, OFF_TYPE, T_HEADER)
@@ -978,10 +1446,23 @@ def format_volume(
         put_long(root, offset + 4, mins)
         put_long(root, offset + 8, ticks)
     write_bstr(root, _tail(block_size, 80), validate_name(label), MAX_NAME)
+    used = {root_block, *bitmap_blocks}
+    if cache_block:
+        used.add(cache_block)
+        put_long(root, _tail(block_size, 8), cache_block)
+        cache = bytearray(block_size)
+        put_long(cache, OFF_TYPE, T_DIRCACHE)
+        put_long(cache, OFF_HEADER_KEY, cache_block)
+        put_long(cache, 8, root_block)
+        reader.write_block(cache_block, bytes(apply_checksum(cache)))
+    if is_long_names(dos_type):
+        # The long-name variants repeat the DOS type in the root block and
+        # keep a running count of the blocks in use there.
+        put_long(root, _tail(block_size, 16), int.from_bytes(dos_type, "big"))
+        put_long(root, _tail(block_size, 44), len(used))
     put_signed_long(root, _tail(block_size, 4), ST_ROOT)
     reader.write_block(root_block, bytes(apply_checksum(root)))
 
-    used = {root_block, *bitmap_blocks}
     for page_index, page_block in enumerate(bitmap_blocks):
         page = bytearray(block_size)
         for long_index in range(longs_per_page):

@@ -5,7 +5,7 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from desktop.__main__ import _desktop_message_text, _folder_selection
+from desktop.__main__ import _desktop_message_text, _folder_selection, _save_path_request
 
 
 class _ScriptValue:
@@ -105,3 +105,19 @@ class FolderSelectionTests(unittest.TestCase):
             (self.root / f"disk{index:02d}.adf").write_bytes(b"x")
 
         self.assertEqual(len(_folder_selection(self.root, limit=5)), 5)
+
+
+class SavePathRequestTests(unittest.TestCase):
+    def test_a_save_request_is_read_with_only_a_bare_file_name(self) -> None:
+        request = _save_path_request(
+            '{"command":"choose-save-path","requestId":"r1",'
+            '"folder":"/home/amiga","name":"../../etc/Card.hdf","title":"Save"}'
+        )
+        self.assertEqual(request["id"], "r1")
+        self.assertEqual(request["folder"], "/home/amiga")
+        self.assertEqual(request["name"], "Card.hdf")
+
+    def test_other_messages_are_not_save_requests(self) -> None:
+        for message in ("open-images", '{"command":"open-plans","plans":[]}', "{", '{"command":"choose-save-path"}'):
+            with self.subTest(message=message):
+                self.assertIsNone(_save_path_request(message))

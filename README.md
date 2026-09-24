@@ -73,7 +73,7 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./amiga-file-forge_1.5.0-1.deb13_amd64.deb
+sudo apt install ./amiga-file-forge_1.6.0-1.deb13_amd64.deb
 amiga-file-forge
 ```
 
@@ -137,7 +137,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current release is `1.5.0`. It provides the editing and transfer workflows
+The current release is `1.6.0`. It provides the editing and transfer workflows
 described in this guide, including movable, resizable and stackable panes, undo
 and named checkpoints, owner-isolated recovery, background job tracking,
 Rigid Disk Block partition maintenance, HFE handling, an Online Library
@@ -189,8 +189,11 @@ These are stated here rather than discovered later:
   decoders and track checksums are pinned byte-for-byte to the public-domain
   xDMS 1.3 reference. Banner and FILE_ID.DIZ pseudo-tracks are not written to
   the rebuilt ADF, and high-density archives rebuild at 22 sectors a track.
-- **Long-filename and third-party filing systems.** `DOS\6`, `DOS\7`, `PFS\3`,
-  `SFS\0` and `SFS\2` are identified and reported, but opened read-only.
+- **Other filing systems.** `SFS\2` partitions, and partitions for systems other
+  than AmigaOS such as CrossDOS or UNIX, are named in the partition list but
+  cannot be opened. Long-filename volumes (`DOS\6`, `DOS\7`) are read and
+  written to the layout amitools documents; no real AmigaOS 3.2 FastFileSystem
+  has yet checked a volume written here.
 - **AmigaOS disks.** No Workbench, Extras, Fonts or Locale disk is shipped or
   downloaded, and none can be: AmigaOS is not free to redistribute. Installing
   Workbench needs the disk images of the release you own.
@@ -1440,10 +1443,33 @@ reports all three for every mounted volume:
 | `DOS\3` | FFS International | whole 512-byte blocks | Latin-1 folding | hash table |
 | `DOS\4` | OFS Directory Cache | 24-byte header per block | Latin-1 folding | hash table plus cache |
 | `DOS\5` | FFS Directory Cache | whole 512-byte blocks | Latin-1 folding | hash table plus cache |
+| `DOS\6` | OFS Long Filenames | 24-byte header per block | Latin-1 folding | hash table |
+| `DOS\7` | FFS Long Filenames | whole 512-byte blocks | Latin-1 folding | hash table |
 
-`DOS\6` and `DOS\7` (long filenames), `PFS\3` and the `SFS` types are
-recognised and reported, but this build opens them read-only rather than
-writing structures it cannot verify.
+The long-filename variants allow names of up to 107 characters, where the
+others stop at 30. On a Directory Cache volume every change also rewrites the
+directory's cache blocks, because a real machine lists a drawer from its cache
+and would otherwise show what was there before. The Kickstart 3.1
+FastFileSystem listed Directory Cache volumes written here without a
+difference, and the changes it made to them validated cleanly afterwards.
+
+Hard drives prepared for large partitions usually carry one of two other
+filing systems, and both are read and written in place:
+
+- **Smart File System**, `SFS\0`, as written by SFS 1.x. Changes follow SFS's
+  own transaction log, so a change cut off part way leaves the old volume or
+  the new one. Names can be up to 100 characters.
+- **Professional File System 3**, `PFS\1`, `PFS\2`, `PFS\3` and `PDS\3`, as
+  written by pfs3aio. Changes are made copy-on-write in the order the PFS3
+  handler uses, with the root block written last. Names can be as long as the
+  volume was formatted for, up to 106 characters. Deleted files are freed at
+  once rather than moved to the volume's deleted-files drawer. Creating new
+  links, and changing a volume that the handler left with an operation still
+  pending, are refused.
+
+Both were checked against the real filing systems on an emulated A1200:
+SFScheck and PFS3's DiskValid accepted volumes built and changed here, and
+every change the real filing system then made read back intact.
 
 Which of these a machine can mount is not a matter of taste. A Kickstart 1.3
 machine has no FastFileSystem in ROM, so an FFS volume will not mount at all
@@ -2646,7 +2672,7 @@ curl http://localhost:8674/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"amiganut","status":"ok","version":"1.5.0"}
+{"engine":"amiganut","status":"ok","version":"1.6.0"}
 ```
 
 ## Main dependencies

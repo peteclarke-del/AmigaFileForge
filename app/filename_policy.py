@@ -137,6 +137,7 @@ def target_name_policy(
     *,
     item_type: object = "file",
     name_limit: object = None,
+    volume_format: object = None,
 ) -> TargetNamePolicy:
     """Return the one authoritative leaf-name policy for a target kind."""
     target = str(kind or "").strip().lower()
@@ -158,6 +159,8 @@ def target_name_policy(
     except (TypeError, ValueError):
         limit = AMIGA_NAME_LIMIT
     label = "OFS" if target == "ofs" else "FFS"
+    if str(volume_format or "") in {"SFS", "PFS3"}:
+        label = str(volume_format)
     return TargetNamePolicy(
         target or "ffs", label, limit, _AMIGA_FORBIDDEN, latin1=True
     )
@@ -172,7 +175,11 @@ def session_name_policy(session) -> TargetNamePolicy:
         else session.kind
     )
     capabilities = getattr(session, "ffs_capabilities", {}) or {}
-    return target_name_policy(kind, name_limit=capabilities.get("nameLimit"))
+    return target_name_policy(
+        kind,
+        name_limit=capabilities.get("nameLimit"),
+        volume_format=capabilities.get("format"),
+    )
 
 
 __all__ = [

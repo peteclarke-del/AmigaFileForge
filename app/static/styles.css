@@ -1118,13 +1118,19 @@ body:has(dialog[open].failed) .pane .loading { display: none; }
 /* The install methods differ in what they can and cannot do, and the choice
    is not reversible once a drive has been written to, so each option carries
    its explanation rather than relying on a name the reader has to decode. */
-.install-modes { display: flex; flex-direction: column; gap: 2px; }
-.install-mode { align-items: flex-start; margin: 6px 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--cream); }
-.install-mode input { margin-top: 2px; flex: 0 0 auto; }
-.install-mode span { display: flex; flex-direction: column; gap: 3px; }
-.install-mode b { color: var(--ink); font-size: 11px; }
-.install-mode small { color: var(--muted); font-size: 10px; line-height: 1.45; }
-.install-mode:has(input:checked) { border-color: var(--focus-ring); background: var(--paper); }
+.install-modes, .drive-choices { display: flex; flex-direction: column; gap: 2px; }
+.drive-choice:has(input:disabled) { opacity: 0.7; }
+.drive-choice .drive-choice-note { color: var(--ink); }
+.clone-targets-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 0 2px; }
+/* A host path typed in full, with a button beside it for the native chooser. */
+.path-field { display: flex; gap: 6px; align-items: center; }
+.path-field input { flex: 1 1 auto; min-width: 0; }
+.install-mode, .drive-choice { align-items: flex-start; margin: 6px 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--cream); }
+.install-mode input, .drive-choice input { margin-top: 2px; flex: 0 0 auto; }
+.install-mode span, .drive-choice span { display: flex; flex-direction: column; gap: 3px; }
+.install-mode b, .drive-choice b { color: var(--ink); font-size: 11px; }
+.install-mode small, .drive-choice small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.install-mode:has(input:checked), .drive-choice:has(input:checked) { border-color: var(--focus-ring); background: var(--paper); }
 /* Installing AmigaOS from the operator's own floppies. Each part of the
    release gets a row saying what it is, where it lands and which of the discs
    read is going to play it, because a set assembled wrongly produces a drive

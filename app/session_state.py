@@ -80,5 +80,6 @@ def session_metadata(session: ImageSession) -> dict:
         "dirty": session.dirty,
         "finalisedMtimeNs": session.finalised_mtime_ns,
         "ownerId": session.owner_id,
+        "attachedDevice": session.attached_device,
         "warnings": session.warnings,
     }

@@ -60,6 +60,11 @@ window.AmigaPaneView = (() => {
     // the wording for the header control either way. The button stays visible
     // when unavailable so the capability is discoverable, and says why.
     const exportAvailability = image => {
+      // A drive opened in place is copied out to a file by its own dialog,
+      // which the header control opens just as the File menu does.
+      if (image.attachedDrive) {
+        return { available: true, label: `Export ${image.name} to an image file` };
+      }
       const formats = image.exportFormats || [];
       if (formats.length) {
         return { available: true, label: `Export ${image.name} as another format` };

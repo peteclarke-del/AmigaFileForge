@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
   <releases>
+    <release version="1.6.0" date="2026-09-24">
+      <description>
+        <p>Opens a hard drive or memory card from an Amiga, attached through a USB adapter, where it is. The drive opens read-only and takes changes once writes are allowed, and it can be exported to an image file or copied onto another attached drive. Reads and writes the Smart File System and PFS3 as well as every variant of FFS, and keeps Directory Cache volumes correct. Fixes copying files between panes, which failed for hard-drive partitions and, for floppies, did not work at all.</p>
+      </description>
+    </release>
     <release version="1.5.0" date="2026-09-14">
       <description>
         <p>Adds Check for Application Updates to the About box. Nothing is sent until it is pressed. It asks GitHub for the latest release and says whether a newer version exists. A package installed from a release can then download the package built for the same system, check it against the release's checksums, install it with APT after asking for the password, and restart. The Docker service and a source checkout are sent to the release page instead.</p>
