@@ -341,6 +341,81 @@ class LargeDriveTests(LargeFixture):
             raw.close()
 
 
+class WriteOrderTests(LargeFixture):
+    """What is cleared before a volume is formatted must not arrive after it.
+
+    A formatter for PFS3 or SFS opens the drive through a handle of its own.
+    Zeros written through another handle and left in its buffer reach the file
+    when that handle is closed, which is after the volume has been written,
+    and take its root block with them. Whether that happens depends on how
+    much the interpreter buffers, so these tests give every handle a buffer
+    larger than anything written here.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        real_open = Path.open
+
+        def buffered(path, mode="r", buffering=-1, *args, **kwargs):
+            if "b" in mode and buffering == -1:
+                buffering = 4 * MIB
+            return real_open(path, mode, buffering, *args, **kwargs)
+
+        opening = patch.object(Path, "open", buffered)
+        opening.start()
+        self.addCleanup(opening.stop)
+
+    def test_every_partition_of_a_new_drive_keeps_its_root_block(self) -> None:
+        for filesystem in ("pfs3", "sfs", "ffs-intl"):
+            with self.subTest(filesystem=filesystem):
+                create_drive(self.image, 4 * GIB, [
+                    {"name": "DH0", "label": "First", "filesystem": filesystem, "sizeBytes": GIB},
+                    {"name": "DH1", "label": "Second", "filesystem": filesystem, "sizeBytes": GIB},
+                ])
+                for index, label in enumerate(("First", "Second")):
+                    mount, _name = mount_image(self.image, partition=index)
+                    try:
+                        self.assertEqual(mount.title, label)
+                        self.assertEqual(mount.validate(), [])
+                    finally:
+                        mount.close()
+                self.image.unlink()
+
+    def test_a_volume_across_a_whole_card_keeps_both_ends(self) -> None:
+        for filesystem in ("pfs3", "sfs"):
+            with self.subTest(filesystem=filesystem):
+                allocate_image(self.image, 2 * GIB)
+                create_volume(self.image, None, filesystem, "Whole")
+                mount, _name = mount_image(self.image)
+                try:
+                    self.assertEqual(mount.title, "Whole")
+                    self.assertEqual(mount.validate(), [])
+                finally:
+                    mount.close()
+                with self.image.open("rb") as handle:
+                    first = handle.read(4)
+                    handle.seek(2 * GIB - 512)
+                    last = handle.read(4)
+                # The Smart File System keeps a second root block at the end.
+                if filesystem == "sfs":
+                    self.assertEqual(last, first)
+                self.image.unlink()
+
+    def test_a_reformatted_partition_keeps_its_root_block(self) -> None:
+        create_drive(self.image, 4 * GIB, [
+            {"name": "DH0", "label": "First", "filesystem": "ffs-intl", "sizeBytes": GIB},
+        ])
+        for filesystem in ("pfs3", "sfs", "ffs-intl"):
+            with self.subTest(filesystem=filesystem):
+                reformat_partition(self.image, 0, "Again", filesystem)
+                mount, _name = mount_image(self.image, partition=0)
+                try:
+                    self.assertEqual(mount.title, "Again")
+                    self.assertEqual(mount.validate(), [])
+                finally:
+                    mount.close()
+
+
 class HandlerChoiceTests(unittest.TestCase):
     def test_kickstart_carries_only_the_fast_file_system(self) -> None:
         for name in ("ofs", "ffs", "ffs-intl", "ffs-dc"):
