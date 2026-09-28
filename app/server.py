@@ -111,6 +111,7 @@ def create_app(
         activity=media_activity,
     )
     application.extensions["amiga_app_updater"] = app_updater
+    application.extensions["amiga_disk_service"] = service
 
     @application.before_request
     def authenticate_desktop_host():
@@ -179,6 +180,14 @@ def create_app(
         if not image_id:
             return None
         session = service.get(str(image_id))
+        if session.in_emulator:
+            # Refused before an undo point is taken. Taking one and then
+            # rolling back to it would put the image back underneath the
+            # machine that is writing to it.
+            return jsonify(error=(
+                "This drive is attached to the running emulator, which is "
+                "writing to it. Close the emulator before changing it here."
+            )), 409
         if session.attached_device:
             # A drive opened in place has no undo: each checkpoint would be a
             # copy of the whole drive. Changes wait until writes are allowed.

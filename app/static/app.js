@@ -4010,8 +4010,8 @@ async function showAmigaosCdInstall(index) {
 
   const closed = showModal(`
     <h2>Install AmigaOS 3.5 or 3.9</h2>
-    <p>Prepares ${esc(volumeLabel(pane) || pane.image.name)} to be updated, then boots it with the release CD in the drive.</p>
-    <div class="help-note"><strong>The installer is Commodore's.</strong> These releases are installed by a script on the disc that reads the running system and asks where things should go. It cannot be run unattended, so this checks what it can and then hands you the machine with everything in place.</div>
+    <p>Starts the machine with the release CD in its CD drive and ${esc(volumeLabel(pane) || pane.image.name)} attached, so that the disc's installer can install onto it.</p>
+    <div class="help-note"><strong>The installer is Commodore's.</strong> These releases are installed by a script on the disc that reads the running system and asks where things should go. It cannot be run unattended, so this checks what it can and then hands you the machine with everything in place. A drive with nothing on it is started from the emergency system the disc carries.</div>
     <div class="field"><label>Release CD</label>
       <button type="button" class="button" data-choose-cd>Choose a CD image…</button>
       <small>The ISO of the AmigaOS ${esc((releases.releases || []).map(r => r.key).join(" or ") || "3.5 or 3.9")} disc you own. Nothing is downloaded.</small></div>
@@ -4067,7 +4067,7 @@ async function showAmigaosCdInstall(index) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ disc: disc.id, partition: pane.partition }),
       })).preflight;
-      renderAmigaosCdPreflight(summary, preflight, boot, checked, files[0].name);
+      renderAmigaosCdPreflight(summary, preflight, boot, checked, files[0].name, index);
     } catch (error) {
       summary.className = "file-selection-summary chooser-failed";
       summary.innerHTML = `<span>${esc(error.message)}</span>`;
@@ -4080,22 +4080,35 @@ async function showAmigaosCdInstall(index) {
 //: What the preflight found, said plainly. Every blocking reason is shown
 //: rather than only the first, because an operator fixing one at a time and
 //: rerunning is exactly the slow loop the check exists to avoid.
-function renderAmigaosCdPreflight(summary, host, boot, checked, filename) {
+function renderAmigaosCdPreflight(summary, host, boot, checked, filename, index) {
   const found = checked.disc || {};
+  // The disc and the drive are judged separately and said separately. A
+  // drive that is not ready under a disc that is reads, at a glance, as a
+  // disc that failed, so the disc's line says outright that the disc is fine.
   summary.className = `file-selection-summary ${found.recognised ? "has-files" : "chooser-failed"}`;
   summary.innerHTML = found.recognised
-    ? `<span><strong>${esc(found.label)}</strong> recognised from the volume name <code>${esc(found.volume)}</code>.</span>`
-    : `<span>${esc(found.reason || `${filename} was not recognised.`)}</span>`;
+    ? `<span><strong>The disc is fine.</strong> It is ${esc(found.label)}, recognised from the volume name <code>${esc(found.volume)}</code>.</span>`
+    : `<span><strong>The disc was not accepted.</strong> ${esc(found.reason || `${filename} was not recognised.`)}</span>`;
 
+  const aboutDisc = item => !found.recognised && item === found.reason;
+  const blocking = checked.blocking.filter(item => !aboutDisc(item));
+  const notes = checked.notes || [];
   host.hidden = false;
   host.innerHTML = `
-    ${checked.blocking.length ? `<div class="help-warning"><strong>Not ready yet:</strong><ul>${
-      checked.blocking.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
+    ${blocking.length ? `<div class="help-warning"><strong>${found.recognised ? "The drive is not ready:" : "Not ready yet:"}</strong><ul>${
+      blocking.map(item => `<li>${esc(item)}</li>`).join("")}</ul>${
+      checked.needsWorkbench ? '<button type="button" class="button ghost" data-install-workbench>Install Workbench 3.1 onto this drive…</button>' : ""}</div>` : ""}
+    ${notes.length ? `<div class="help-note"><strong>How this will go:</strong><ul>${
+      notes.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
     ${checked.warnings.length ? `<div class="help-note"><strong>Worth knowing:</strong><ul>${
       checked.warnings.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
     ${found.recognised && found.requires ? `<div class="help-note"><strong>${esc(found.label)} needs:</strong> ${esc(found.requires)}</div>` : ""}
-    ${checked.ready ? `<div class="help-note">Everything this can check is in order. Booting will start the machine with the CD in the drive; open the disc on the Workbench and run its installation icon.</div>` : ""}`;
+    ${checked.ready ? `<div class="help-note">Everything this can check is in order. The installer writes to this drive, so the drive cannot be changed here until the emulator is closed, and <strong>Edit → Undo last change</strong> afterwards puts the drive back as it is now.</div>` : ""}`;
   boot.disabled = !checked.ready;
+  host.querySelector("[data-install-workbench]")?.addEventListener("click", () => {
+    modal.close();
+    setTimeout(() => guardedPaneAction(index, () => showWorkbenchInstall(index)), 0);
+  });
 }
 
 //: A pane can receive an install only when it is a volume on a hard drive.

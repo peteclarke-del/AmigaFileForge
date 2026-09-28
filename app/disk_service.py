@@ -272,6 +272,11 @@ class DiskService(
 
     @staticmethod
     def require_writable_geometry(session: ImageSession) -> None:
+        if session.in_emulator:
+            raise DiskError(
+                "This drive is attached to the running emulator, which is "
+                "writing to it. Close the emulator before changing it here."
+            )
         if session.attached_device and not session.device_writes:
             raise DiskError(
                 "This drive is open read-only. Choose Allow writes on the pane "

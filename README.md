@@ -157,7 +157,9 @@ tracks which library base a routine has open. Cheat analysis combines static
 evidence with tester-supplied emulator observations; proven changes can be
 packaged as exact-hash guarded patches. A managed FS-UAE session supports every
 medium the emulator can mount, including a whole-drive hand-off that attaches an
-`.hdf` as a hard drive rather than extracting a volume from it. FS-UAE is the
+`.hdf` as a hard drive rather than extracting a volume from it. A drive run to
+look at it is attached read-only, and a drive given to an installer is attached
+as the image itself, so what is installed is kept. FS-UAE is the
 one bundled emulator, chosen because it covers the whole Amiga range in a single
 portable build. Proven cheat findings are packaged as exact-hash guarded
 patches.
@@ -2752,6 +2754,12 @@ Backend routes are split by responsibility:
   whether a machine can run one. Neither can be installed from outside the
   Amiga, so this checks the disc, the processor and the drive, and the
   installation itself is left to Commodore's own script.
+- `app/emergency_boot.py` builds a small boot drive from the system a release
+  CD carries, which is what starts the machine when the drive being installed
+  onto is empty.
+- `app/emulator_media.py` hands a drive to the emulator as the image itself,
+  in a place the emulator is allowed to read, so that what an installer writes
+  there is kept.
 - `app/iso9660.py` reads an ISO 9660 CD image, including the Joliet and Rock
   Ridge naming schemes and the Amiga `AS` extension that carries a file's
   protection bits and comment. It reads from the file rather than into memory,
