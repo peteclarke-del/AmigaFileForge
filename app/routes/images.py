@@ -75,12 +75,20 @@ def create_images_blueprint(
     @request_effect("lifecycle", "creating an image session")
     def create_image():
         data = payload()
+        options = data.get("rom") if isinstance(data.get("rom"), dict) else None
+        if isinstance(data.get("drive"), dict):
+            # A hard drive says how it is to be laid out: its partitions, or
+            # the filing system of the one volume it holds.
+            options = {
+                "partitions": data["drive"].get("partitions"),
+                "filesystem": data["drive"].get("filesystem"),
+            }
         session = service.create_blank(
             data.get("format", "adf"),
             data.get("title", "BLANK"),
             data.get("capacity"),
             data.get("targetHardware", "auto"),
-            options=data.get("rom") if isinstance(data.get("rom"), dict) else None,
+            options=options,
         )
         return jsonify(image=service.summary(session))
 

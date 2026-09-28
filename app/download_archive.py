@@ -18,6 +18,9 @@ from .rom_workbench import project_json
 Progress = progress_module.Progress
 PROGRESS_TOTAL = 100
 
+#: From this size an image that is mostly empty is compressed in its ZIP.
+LARGE_IMAGE = 64 * 1024 * 1024
+
 
 def _mapped_progress(
     report: Progress,
@@ -91,8 +94,11 @@ def build_download_archive(
     )
     image_stat = image_path.stat()
     allocated_size = int(getattr(image_stat, "st_blocks", 0)) * 512
+    # A drive image is mostly space nothing has been written to. Stored as it
+    # is, the ZIP of a 128 GB drive would be 128 GB; compressed, the empty
+    # space costs almost nothing.
     compress_sparse_dat = bool(
-        is_hardfile
+        (is_hardfile or image_stat.st_size >= LARGE_IMAGE)
         and allocated_size
         and allocated_size < image_stat.st_size // 2
     )

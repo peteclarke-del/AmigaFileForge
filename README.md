@@ -189,9 +189,22 @@ These are stated here rather than discovered later:
   decoders and track checksums are pinned byte-for-byte to the public-domain
   xDMS 1.3 reference. Banner and FILE_ID.DIZ pseudo-tracks are not written to
   the rebuilt ADF, and high-density archives rebuild at 22 sectors a track.
+- **Large drives.** A drive can be up to 2 TB. Partitions are added, removed,
+  reformatted and renamed, but not moved or resized. A drive whose partition
+  table carries a bad-block list or drive initialisation code is read and not
+  rewritten. Writing to a card, preparing one in place and saving an image
+  without its empty space belong to the Linux desktop application. The Docker
+  edition creates and edits large drive images. Its save builds a ZIP in which
+  the drive's empty space is compressed to almost nothing, but every byte of
+  the drive is still read and checksummed to build it, which takes about a
+  quarter of a minute for each gigabyte of the drive's size: over half an hour
+  for a 128 GB drive. The New Image dialog says so when a drive of 2 GB or
+  more is being laid out, and saving one asks first, with the time it will
+  take, so the save can be cancelled before it starts.
 - **Other filing systems.** `SFS\2` partitions, and partitions for systems other
   than AmigaOS such as CrossDOS or UNIX, are named in the partition list but
-  cannot be opened. Long-filename volumes (`DOS\6`, `DOS\7`) are read and
+  cannot be opened. No Smart File System handler is shipped, so a drive with
+  SFS partitions is created once you have supplied one. Long-filename volumes (`DOS\6`, `DOS\7`) are read and
   written to the layout amitools documents; no real AmigaOS 3.2 FastFileSystem
   has yet checked a volume written here.
 - **AmigaOS disks.** No Workbench, Extras, Fonts or Locale disk is shipped or
@@ -1506,16 +1519,24 @@ image. The creation dialog then offers:
 
 **Hard drives**
 
-- A UAE hardfile as a matched HDA and GEO sidecar pair
-- A partitioned drive as an HDF with a Rigid Disk Block
-- A raw physical-drive image
+- A UAE hardfile as a matched HDA and GEO sidecar pair, in any FFS or OFS
+  variant, up to 4 GB
+- A partitioned drive as an HDF with a Rigid Disk Block, of any size up to
+  2 TB, with the partitions and filing systems you lay out
+- A raw drive image holding one volume with no partition table: FFS or OFS up
+  to 4 GB, the Professional File System up to 1.6 TB or the Smart File System
+  up to 127 GB
 
 Either kind of hard drive converts to the other through **File → Export as…**.
-Adding a Rigid Disk Block copies the volume across unchanged and reserves one
-cylinder in front of it for the partition table, so the drive then declares its
-own geometry. Removing one exports the open partition as a bare `.hdf` with a
-`.geo` sidecar carrying the geometry that the partition table used to hold; the
-two files are only usable together. The working image is untouched either way.
+Adding a Rigid Disk Block copies the volume across unchanged into a partition
+of exactly the volume's size, puts the partition table in front of it and adds
+the handler the volume needs, so the drive then describes itself. Removing one
+exports the open partition as a bare `.hdf` with a `.geo` sidecar carrying the
+geometry that the partition table used to hold; the two files are only usable
+together. The working image is untouched either way. These conversions are
+handed to the browser as one download, so they are offered for volumes up to
+4 GB. A larger one is converted by the desktop application's **File → Save
+drive image to a file…**, which writes straight to a file.
 
 **ROM**
 
@@ -1525,17 +1546,16 @@ two files are only usable together. The working image is untouched either way.
   1 MiB: size header, reset vector, module name, identification string,
   declared size and a correct reset checksum
 
-Hard-drive capacity is entered as a size such as `4MB`, `20MB` or `512MB`. The
-size field follows the selected format: fixed-size floppy and HFE choices show
-their real capacity in a read-only field, while hardfile, HDF and RAW choices
-keep it editable and preserve the last typed capacity as you switch between
-formats.
+Hard-drive capacity is entered as a size such as `20MB`, `512MB`, `4GB` or
+`128GB`. The size field follows the selected format: fixed-size floppy and HFE
+choices show their real capacity in a read-only field, while hardfile, HDF and
+RAW choices keep it editable and preserve the last typed capacity as you switch
+between formats.
 
-A new partitioned drive is created with a Rigid Disk Block and one FFS
-International partition, which is what an Amiga expects to find. The title you
-enter is written both to that volume's root block and to the partition's RDB
-device name, so the drive mounts correctly on real hardware and in an
-emulator.
+A new partitioned drive is laid out in the partition editor described under
+[Creating a drive](#creating-a-drive), and carries the handlers its partitions
+need. A hardfile and a raw drive image hold one volume, in the filing system
+chosen beside the size.
 
 A newly created hardfile stays linked to its GEO sidecar while it is edited and
 downloads as a ZIP containing both. The sidecar's surfaces, sectors and
@@ -2083,10 +2103,133 @@ while it is set.
 ### Creating a drive
 
 Choose **File → New → New Image** and pick **Partitioned drive · HDF with RDB**.
-Enter a volume title and a capacity such as `20MB` or `512MB`. The new drive is
-created with a Rigid Disk Block and one FFS International partition, which is
-what an Amiga expects to find, and the title is written both to the volume's
-root block and to the partition's device name.
+Give the image a name and the drive a size, then lay out its partitions in the
+table below. A drive can be any size up to 2 TB, which is as far as AmigaDOS
+counts. A card of 128 GB is an ordinary request.
+
+The size is written as `512MB`, `4GB` or `128GB` and counted in powers of 1024,
+as AmigaDOS and HDToolBox count. A card holds less than its label says, because
+its maker counts in thousands: a 128 GB card is about 119 GiB. **Or size it for
+a card** fills in a size that fits a card of each labelled size, and lists any
+card attached through USB at its exact size.
+
+Two choices start the layout, and neither is made for you:
+
+- **Starting layout** fills in the table: one partition, a system partition
+  and a work partition, the four partitions a PiStorm card usually has, or a
+  small FFS system partition with a large work partition beside it.
+- **Filing system for the large partitions** is what that layout uses for every
+  partition too large for FFS: `PFS\3`, `PDS\3` or `SFS\0`.
+
+Every row can then be changed. A partition has a device name, a volume name, a
+filing system, a size, a boot flag and a boot priority, and a partition with no
+size takes what the others leave. The layout is checked after every change, and
+the bar under the table shows the drive as it would be divided. The drive is
+created only when nothing is wrong with the layout.
+
+| Filing system | DOS type | Largest partition here | Handler |
+|---|---|---|---|
+| Professional File System 3 | `PFS\3` | 1.6 TB | Comes with Amiga File Forge |
+| Professional File System 3, direct SCSI | `PDS\3` | 1.6 TB | The same file |
+| Smart File System | `SFS\0` | 127 GB | Supplied by you |
+| FFS and OFS, plain, international and directory cache | `DOS\0` to `DOS\5` | 4 GB | In Kickstart |
+| FFS Long Filenames | `DOS\7` | 4 GB | In the Kickstart of AmigaOS 3.1.4 and later |
+
+An FFS partition is kept to 4 GB. The engine formats larger FFS volumes, and
+they work, but FFS is slow to validate and easy to damage at that size and the
+FastFileSystem in a Kickstart 3.1 ROM cannot reach past 4 GB at all. The editor
+refuses the partition and names the Professional File System instead.
+
+`PFS\3` and `PDS\3` are the same filing system reached two ways. `PFS\3` asks
+the device driver for blocks in the ordinary way, which needs a driver that
+counts past 4 GB: AmigaOS 3.1.4 or later, a PiStorm, an accelerator with its own
+driver, or an emulator. `PDS\3` talks to the drive directly, which is how a
+machine with the `scsi.device` of Kickstart 3.1 reaches a partition past the
+first 4 GB. The layout says which partitions that distinction affects.
+
+A new drive of any size is created in about a second and occupies a few
+megabytes, because the image is a sparse file: it reports the size of the
+drive it describes and takes room only for what is put in it. Installing
+Workbench onto a 128 GB drive leaves an image of about 40 MB on this machine.
+
+### Filing-system handlers
+
+Kickstart carries the FastFileSystem and nothing else. A partition in any other
+filing system mounts only if its handler travels with the drive, in the Rigid
+Disk Block, where the machine loads it before it mounts the first partition.
+Every drive made here is given the handlers its partitions need, so a drive
+with PFS3 partitions boots on a machine that has never had PFS3 installed.
+
+The Professional File System, `pfs3aio` 19.2, comes with the application. Its
+licence allows that, and is kept beside it in `app/handlers/`. The one file
+serves both `PFS\3` and `PDS\3`, and is recorded in a drive's table once for
+each of the two that the drive uses.
+
+Any other handler is supplied by you. **Tools → Filing-system handlers…** lists
+each filing system with the handler in use for it, and takes a handler from a
+file or from a drive that already carries one. A card prepared on an Amiga
+holds exactly the handler its partitions were formatted with, so opening that
+card and choosing **Take the handlers from this drive** is often the quickest
+way to get one. A handler is the program the Amiga keeps in `L:`, such as
+`SmartFilesystem`, not the archive it was distributed in. A file is refused if
+it is not an Amiga program, or if its own version string says it belongs to a
+different filing system. A handler you supply takes the place of the one that
+comes with the application, which is how a newer PFS3 is used.
+
+Where a supplied handler is kept follows how the application was installed:
+
+| Installation | Handlers are kept | For |
+|---|---|---|
+| For one person, from a checkout with the user-local installer | `~/.config/amiga-file-forge/handlers` | That person |
+| For the whole machine, from the Debian or RPM package | `/var/lib/amiga-file-forge/handlers` | Everyone who uses that machine |
+| The Docker service | `/app/work/handlers`, in the working volume | Everyone who uses that service |
+
+A copy inside somebody's home directory, or one that the person running it
+owns, is theirs. Anything else was installed for everyone. Keeping a handler
+for the whole machine takes an administrator's permission, so the desktop
+application asks for a password the way its own update does, and says what to
+run in a terminal if the prompt is dismissed or `pkexec` is missing. The
+handlers dialog says which kind of installation it is and where its handlers
+go.
+
+`AMIGA_FILE_FORGE_HANDLER_DIR` names another directory, and
+`AMIGA_FILE_FORGE_INSTALL_SCOPE`, set to `user` or `machine`, settles the
+question for an installation that cannot be told apart.
+
+### Changing the partitions of a drive
+
+**Tools → Partitions…** shows the partition table of the drive in the pane, the
+room no partition uses and the handlers the drive carries. From there:
+
+- **Add a partition here…** puts a partition in unused room and formats it.
+- **Format…** empties a partition, in the filing system it has or in another.
+  The partition keeps its place and its size.
+- **Properties…** changes the device name, the boot flag, the boot priority and
+  whether the partition mounts at start-up. The volume inside is not touched.
+- **Remove…** takes a partition out of the table and leaves its room unused.
+  Partitions are not moved or resized, because that means moving every file in
+  them.
+- **Make the image larger…** adds room at the end of a drive image, ready for a
+  new partition.
+- **Claim the rest of the drive** appears when the drive is larger than its
+  partition table says, as it is after an image has been written to a larger
+  card. Nothing already on the drive moves.
+- **Add the handler to the drive** appears when a partition's handler is
+  missing from the table and is one you have.
+
+On an image each change is one undo point, so **Edit → Undo last change** puts
+the table and the volumes back as they were. On a drive opened in place there
+is no undo, and the dialog says so before anything is removed or formatted.
+
+A partition table carrying a bad-block list or drive initialisation code is
+left exactly as it is. Its partitions can be browsed and changed inside, but
+not added, removed or reformatted.
+
+Drives written by releases up to 1.6.0 recorded the vendor text and the number
+of the last table block in the wrong fields of the Rigid Disk Block. Nothing
+that mounts a partition reads those fields, so the drives worked, but HDToolBox
+showed nonsense for them. Such a drive is still read correctly, and is put
+right the first time its table is changed.
 
 ### Bare hardfiles
 
@@ -2339,6 +2482,11 @@ in the [project repository](https://github.com/peteclarke-del/AmigaFileForge).
 
 - The default upload limit is 8 GiB. Set `AMIGA_MAX_UPLOAD_GIB` in
   `docker-compose.yml` to change it.
+- A drive image is a sparse file, so its working copy and each undo point take
+  the room its contents need and not the size of the drive. That depends on
+  the filing system holding the working directory: ext4, XFS and Btrfs keep
+  sparse files sparse, and a working directory that cannot is told apart when
+  a drive is created, which is then refused if it would not fit.
 - A working image needs roughly its own size again in the Docker volume.
   Extraction and conversion may need additional temporary space. HFE sessions
   retain the original container, decoded sectors, and a verified encoded copy
@@ -2407,6 +2555,7 @@ services:
       - "8668:8668"
     environment:
       AMIGA_FILE_FORGE_WORK_DIR: /app/work
+      AMIGA_FILE_FORGE_HANDLER_DIR: /app/work/handlers
       AMIGA_MAX_UPLOAD_GIB: "8"
     volumes:
       - amiga-file-forge-work:/app/work
@@ -2420,6 +2569,9 @@ networks:
 ```
 
 `AMIGA_FILE_FORGE_WORK_DIR` selects the private server-side working directory.
+`AMIGA_FILE_FORGE_HANDLER_DIR` selects where supplied filing-system handlers
+are kept. The Compose file points it into the working volume, so that a handler
+supplied to the service is still there when the container is replaced.
 The Compose service, image, container, volume and network all use explicit
 Amiga File Forge names, so they remain consistent regardless of the checkout
 directory name.
@@ -2462,7 +2614,13 @@ own beyond the standard library.
   implementations. It owns block allocation, the hash-table directories, file
   extension chains, validation and defragmentation.
 - `amiganut/filesystem/rdb.py` reads and writes the Rigid Disk Block, its
-  partition chain and its filesystem headers.
+  partition chain and the filing-system handlers it carries, and changes a
+  table that is already there: adding and removing partitions, and claiming
+  the rest of a drive larger than its table.
+- `amiganut/filesystem/drive.py` builds a drive from a layout: the table, the
+  handlers and an empty volume in each partition, formatted by whichever
+  module its DOS type belongs to. It writes only the blocks that describe the
+  drive, which is what keeps a new image sparse.
 - `amiganut/filesystem/__init__.py` is the registry: `create_filesystem`,
   `reader_for`, `identify`, the geometry sidecar, and the `AmigaMetadata` /
   `Datestamped` / `Filetyped` mount protocols.
@@ -2485,7 +2643,24 @@ python3 -m amiganut ls drive.hdf:
 python3 -m amiganut tree games.adf:
 python3 -m amiganut validate drive.hdf
 python3 -m amiganut kickstart kick31.rom
+python3 -m amiganut create --layout card.json card.hdf
 ```
+
+The last of those creates a partitioned drive from a layout written as JSON,
+which is how a drive is built from a script:
+
+```json
+{"size": "128GB",
+ "partitions": [
+   {"name": "DH0", "label": "System", "filesystem": "pfs3", "size": "2GB", "bootable": true},
+   {"name": "DH1", "label": "Work", "filesystem": "pfs3"}],
+ "handlers": [{"filesystem": "pfs3", "path": "pfs3aio"}]}
+```
+
+A partition with no size takes what the others leave, and a handler's path is
+read relative to the layout file. The engine applies the limits of each filing
+system and no others, so it formats an FFS partition of any size. Keeping FFS
+to 4 GB is the workbench's decision, made in the partition editor.
 
 ### Backend responsibilities
 
@@ -2540,6 +2715,16 @@ Backend routes are split by responsibility:
   sidecar, and the root-block checks a real machine applies.
 - `app/rdb_service.py` reads the Rigid Disk Block, lists the partitions it
   chains to, and opens one of them as an ordinary mountable volume.
+- `app/drive_layout.py` plans a drive before anything is written: sizes,
+  the filing systems on offer and their limits, the starting layouts, and
+  what is wrong with a layout or worth knowing about it.
+- `app/drive_layout_service.py` creates drives from a plan, changes the
+  partition table of an open drive, prepares a card in place and saves a
+  drive image without its empty space.
+- `app/filesystem_handlers.py` keeps the handlers a new drive is given: the
+  one that comes with the application and the ones you supply.
+- `app/drive_write.py` writes a drive image to an attached drive and reads it
+  back, skipping what the image leaves empty.
 - `app/disk_identity.py` works out a disk's title, launcher and stack from the
   disk itself, carrying the evidence for each conclusion so an ambiguous one
   can be marked rather than guessed.

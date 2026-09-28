@@ -41,6 +41,13 @@ from ..filesystem import (
     write_rigid_disk,
 )
 from ..filesystem.amigados import join_path, split_path
+from ..filesystem.drive import (
+    allocate_image,
+    create_drive,
+    create_volume,
+    initialise_drive,
+    make_handler,
+)
 from ..filesystem.blocks import (
     BLOCK_SIZE,
     DD_BLOCKS,
@@ -380,13 +387,12 @@ def _geometry_for(text: str) -> tuple[int, Geometry | None]:
         return DD_BLOCKS, None
     if request in {"hd", "1760k", "1.76m"}:
         return HD_BLOCKS, None
-    match = re.fullmatch(r"capacity=([0-9]+)\s*([kmg]?)b?", request)
-    if not match:
-        match = re.fullmatch(r"([0-9]+)\s*([kmg]?)b?", request)
+    match = re.fullmatch(r"(?:capacity=)?([0-9]+(?:\.[0-9]+)?)\s*([kmgt]?)i?b?", request)
     if match:
-        value = int(match.group(1))
-        scale = {"": 1, "k": 1024, "m": 1024 * 1024, "g": 1024 * 1024 * 1024}[match.group(2)]
-        total_bytes = value * scale
+        # A size is counted in powers of 1024 whichever way it is spelt, as
+        # AmigaDOS and HDToolBox count: 128GB and 128GiB are the same drive.
+        scale = 1024 ** " kmgt".index(match.group(2) or " ")
+        total_bytes = int(float(match.group(1)) * scale)
         blocks = total_bytes // BLOCK_SIZE
         if blocks < 32:
             raise ConfigurationError("A volume needs at least 16 KiB.")
@@ -427,10 +433,18 @@ def command_create(args) -> int:
             )
         )
         return 0
+    if args.layout:
+        return _create_from_layout(path, Path(args.layout))
     blocks, geometry = _geometry_for(args.geometry or "dd")
+    if str(args.filesystem or "").lower() in ("pfs3", "pds3", "sfs"):
+        create_volume(
+            path, blocks * BLOCK_SIZE, args.filesystem, args.title or "Empty",
+            bootable=bool(args.bootable),
+        )
+        return 0
     if args.filesystem == "rdb":
         size = blocks * BLOCK_SIZE
-        path.write_bytes(b"\0" * size)
+        allocate_image(path, size)
         reader = reader_for(path, writable=True)
         try:
             partitions = []
@@ -462,7 +476,7 @@ def command_create(args) -> int:
             Path(str(path) + ".geo").write_text(write_geometry(Geometry()))
         return 0
 
-    path.write_bytes(b"\0" * (blocks * BLOCK_SIZE))
+    allocate_image(path, blocks * BLOCK_SIZE)
     dos_type = _dos_type_for(args.variant or args.filesystem or "OFS")
     reader = reader_for(path, writable=True)
     try:
@@ -490,6 +504,58 @@ def command_create(args) -> int:
                 )
             )
         )
+    return 0
+
+
+def _create_from_layout(path: Path, layout_path: Path) -> int:
+    """Create a partitioned drive from a layout written as JSON.
+
+    The layout names the drive's size, its partitions and the handler files
+    to embed::
+
+        {"size": "128GB",
+         "partitions": [
+           {"name": "DH0", "label": "System", "filesystem": "pfs3",
+            "size": "2GB", "bootable": true},
+           {"name": "DH1", "label": "Work", "filesystem": "pfs3"}],
+         "handlers": [{"filesystem": "pfs3", "path": "pfs3aio"}]}
+
+    A partition with no size takes what the others leave.
+    """
+    try:
+        layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ConfigurationError(f"The layout could not be read: {error}") from error
+    if not isinstance(layout, dict) or not isinstance(layout.get("partitions"), list):
+        raise ConfigurationError("A layout names a size and a list of partitions.")
+
+    def size_of(value) -> int:
+        if value in (None, "", 0):
+            return 0
+        if isinstance(value, (int, float)):
+            return int(value)
+        return _geometry_for(str(value))[0] * BLOCK_SIZE
+
+    partitions = []
+    for spec in layout["partitions"]:
+        entry = dict(spec)
+        entry["sizeBytes"] = size_of(spec.get("sizeBytes", spec.get("size")))
+        partitions.append(entry)
+    handlers = []
+    for spec in layout.get("handlers") or []:
+        source = Path(str(spec.get("path") or ""))
+        if not source.is_absolute():
+            source = layout_path.parent / source
+        try:
+            binary = source.read_bytes()
+        except OSError as error:
+            raise ConfigurationError(f"The handler {source.name} could not be read.") from error
+        handlers.append(make_handler(spec.get("filesystem") or spec.get("dosType"), binary))
+    size = size_of(layout.get("sizeBytes", layout.get("size")))
+    if path.exists() and not size:
+        initialise_drive(path, partitions, handlers=handlers)
+    else:
+        create_drive(path, size, partitions, handlers=handlers)
     return 0
 
 
@@ -1035,6 +1101,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--partitions", type=int, default=1)
     sub.add_argument("--bootable", action="store_true")
     sub.add_argument("--geometry-sidecar", action="store_true")
+    sub.add_argument(
+        "--layout",
+        default=None,
+        help="A JSON file naming the drive's size, partitions and handlers.",
+    )
     sub.add_argument("image")
 
     sub = add("ls", command_ls, "List directory contents.")
