@@ -449,11 +449,37 @@ function showHelp() {
             </div>
             <div class="help-note"><strong>Filing systems on a drive:</strong> a partition can hold FFS in any of its variants, the Smart File System or the Professional File System 3, and all of them can be read and changed. Names can be as long as the partition's filing system allows: 30 characters on FFS, 107 on the long-filename variants, 100 on SFS and up to 106 on PFS3. A drive or hardfile with no partition table, holding one such volume from its first block, opens the same way. A partition for another system, such as CrossDOS, is listed with its DOS type but cannot be opened. PFS3 volumes cannot be compacted here.</div>
             <div class="help-task">
-              <h4>Create a new drive</h4>
+              <h4>Create a new drive, of any size up to 2 TB</h4>
               <ol>
                 <li>Choose <strong>File → New → New Image</strong> and pick <strong>Partitioned drive · HDF with RDB</strong>.</li>
-                <li>Enter a volume title and a capacity such as <code>20MB</code> or <code>512MB</code>.</li>
-                <li>The new drive is created with a Rigid Disk Block and one FFS International partition, which is what an Amiga expects to find.</li>
+                <li>Name the image and enter the drive's size, such as <code>512MB</code>, <code>4GB</code> or <code>128GB</code>. Sizes are counted in powers of 1024, as AmigaDOS counts. To make an image for a card, choose the card under <strong>Or size it for a card</strong>: a card holds less than its label says, and a card attached through USB is listed at its exact size.</li>
+                <li>Choose a <strong>Starting layout</strong> and the <strong>Filing system for the large partitions</strong>. Neither is chosen for you. The layout fills in the table, and every row can then be changed.</li>
+                <li>Give each partition a device name, a volume name, a filing system and a size. A partition with no size takes what the others leave. Tick <strong>Boot</strong> on the partition the machine starts from.</li>
+                <li>The layout is checked after every change. The bar under the table shows the drive as it would be divided, and anything that stops the drive being made is said beneath it. <strong>Create image</strong> becomes available when nothing is wrong.</li>
+              </ol>
+            </div>
+            <div class="help-note"><strong>Which filing system:</strong> FFS is kept to 4 GB for one partition, because it is slow to validate and easy to damage past that and the FastFileSystem in a Kickstart 3.1 ROM cannot reach further. Use the Professional File System for anything larger. <code>PFS\\3</code> suits a machine whose device driver reaches the whole drive: AmigaOS 3.1.4 or later, a PiStorm, an accelerator with its own driver, or an emulator. <code>PDS\\3</code> is the same filing system talking to the drive directly, which is how a machine with the Kickstart 3.1 <code>scsi.device</code> reaches a partition past the first 4 GB. The Smart File System stops at 127 GB for one partition.</div>
+            <div class="help-warning"><strong>Saving a large drive from the browser is slow:</strong> the browser edition reads every byte of a drive to build the download, the empty space included, at about a quarter of a minute for each gigabyte of the drive's size. That is over half an hour for a 128 GB drive. The New Image dialog says so for a drive of 2 GB or more, and <strong>Save image</strong> asks first, with the time it will take, so you can cancel. Creating the drive and working in it are as quick as on any other. The Linux desktop application saves a drive of any size at once.</div>
+            <div class="help-note"><strong>A large drive takes little room:</strong> a drive image reports the size of the drive it describes and occupies only what has been put in it. A new 128 GB drive takes a few megabytes on this machine, and about 40 MB once Workbench is installed.</div>
+            <div class="help-task">
+              <h4>Filing-system handlers</h4>
+              <ol>
+                <li>Kickstart carries the FastFileSystem and nothing else. A partition in any other filing system mounts only if its handler travels with the drive, so every drive made here is given the handlers its partitions need.</li>
+                <li>The Professional File System comes with Amiga File Forge and serves both <code>PFS\\3</code> and <code>PDS\\3</code>.</li>
+                <li>For the Smart File System, or the FastFileSystem that long filenames need, choose <strong>Tools → Filing-system handlers…</strong> and then <strong>Supply…</strong>. The handler is the program the Amiga keeps in <code>L:</code>, such as <code>SmartFilesystem</code>, not the archive it was distributed in. The partition editor offers the same button when a layout needs a handler you have not supplied.</li>
+                <li>A card prepared on an Amiga carries the handlers its partitions were formatted with. Open it and choose <strong>Take the handlers from this drive</strong>.</li>
+                <li>A handler you supply takes the place of the one that comes with Amiga File Forge, which is how a newer PFS3 is used. <strong>Remove</strong> goes back to the one that came with it.</li>
+                <li>Where a supplied handler is kept follows how Amiga File Forge was installed. A copy installed for you alone keeps it for you. A copy installed for the whole machine, from a package or as the Docker service, keeps it for everyone who uses that copy, and the desktop application asks for an administrator's password to do so. The dialog says which applies.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>Change the partitions of a drive</h4>
+              <ol>
+                <li>Open the drive and choose <strong>Tools → Partitions…</strong>. The dialog shows each partition, the room no partition uses and the handlers the drive carries.</li>
+                <li><strong>Add a partition here…</strong> puts a partition in unused room and formats it. <strong>Format…</strong> empties a partition, in the filing system it has or in another. <strong>Properties…</strong> changes its device name and how it boots, without touching the volume inside. <strong>Remove…</strong> takes it out of the table and leaves its room unused.</li>
+                <li><strong>Make the image larger…</strong> adds room at the end of a drive image. <strong>Claim the rest of the drive</strong> appears when a drive is larger than its partition table says, as it is after an image has been written to a larger card.</li>
+                <li>On an image, each change is one undo point: <strong>Edit → Undo last change</strong> puts the table and the volumes back. On a drive opened in place there is no undo.</li>
+                <li>Partitions are not moved or resized, because that means moving every file in them.</li>
               </ol>
             </div>
             <div class="help-task">
@@ -464,6 +490,16 @@ function showHelp() {
                 <li>To change it, choose <strong>File → Allow writes to drive…</strong>. Changes then go straight to the drive and cannot be undone. <strong>Make drive read-only</strong> stops them again.</li>
                 <li>Saving, the hex editor, compaction, emulation and deployment work on image files and are not offered for a drive. <strong>File → Export drive to image file…</strong> makes an image file of the whole drive, or of one partition with its <code>.geo</code>, copying straight to the file you choose. Empty space is not written, and a copy that is stopped leaves no file behind.</li>
                 <li><strong>File → Copy drive to another drive…</strong> duplicates the drive onto a second card or drive attached through USB. The drive you choose is erased, must be at least as large as the copy, and is named again before anything is written. The copy is read back and compared with the original when it finishes.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>Prepare a new card, or put an image on one</h4>
+              <ol>
+                <li>To prepare a card where it is, choose it in the <strong>Open attached drive</strong> list and then <strong>Initialise…</strong>. Lay out its partitions as for a new image, or make it one volume. Only the blocks that describe the drive are written, so a 128 GB card is ready in seconds.</li>
+                <li>Everything the card held is given up, so the card is named again before anything is written. It then opens in the pane with writes allowed, and Workbench and software can be installed straight onto it.</li>
+                <li>To put a drive image on a card, open the image and choose <strong>File → Write image to attached drive…</strong>. Only what the image holds is written, then read back from the card and compared. <strong>Write every byte</strong> writes the empty space as well, and takes as long as the card is large.</li>
+                <li>A card larger than the image has room left over. Open the card, choose <strong>Tools → Partitions…</strong> and then <strong>Claim the rest of the drive</strong>.</li>
+                <li><strong>File → Save drive image to a file…</strong> saves a drive image to a file of the drive's full size that takes only the room its contents need. It also saves one partition as a hardfile with its <code>.geo</code>, and a volume with no partition table as a drive that has one. <strong>Save image</strong> does this of its own accord for a drive image of 2 GB or more, where the usual ZIP would store every byte of it.</li>
               </ol>
             </div>
             <div class="help-note"><strong>Drive not readable or not listed:</strong> Linux gives whole drives to the administrator until the udev rule that comes with the package is installed, and a drive Linux has mounted must be unmounted first. The Linux desktop guide gives the commands.</div>
@@ -479,9 +515,9 @@ function showHelp() {
               <h4>Convert between the two kinds</h4>
               <ol>
                 <li>Choose <strong>File → Export as…</strong>. A drive with a Rigid Disk Block offers <strong>Bare hardfile and geometry sidecar</strong>; one without offers <strong>Partitioned drive with a Rigid Disk Block</strong>. Only the conversion that applies is listed, because converting a drive to the shape it already has is not a conversion.</li>
-                <li>Adding a Rigid Disk Block copies the volume across unchanged and reserves one cylinder in front of it for the partition table, so the exported file is that much larger than the source. The drive then describes its own geometry, which is what lets <code>HDToolBox</code> and an emulator mount it without being configured first.</li>
+                <li>Adding a Rigid Disk Block copies the volume across unchanged, into a partition of exactly the volume's size, with the partition table in front of it and the handler the volume needs. The drive then describes itself, which is what lets <code>HDToolBox</code> and an emulator mount it without being configured first.</li>
                 <li>Removing one exports the open partition as a bare <code>.hdf</code> with its geometry written beside it as a <code>.geo</code>, both inside a <code>Hardfile0</code> directory. The two files are only usable together: once the partition table is gone, the sidecar is the only place the geometry exists.</li>
-                <li>The working image is not changed either way. The conversion downloads as a separate file, which you can open in another pane to check before using it.</li>
+                <li>The working image is not changed either way. The conversion downloads as a separate file, which you can open in another pane to check before using it. It is offered for volumes up to 4 GB. A larger one is converted in the desktop application by <strong>File → Save drive image to a file…</strong>.</li>
               </ol>
             </div>
             <div class="help-note"><strong>Both kinds use <code>.hdf</code>:</strong> that is what every Amiga emulator calls a hard-drive file. Which kind a file is comes from its contents - a Rigid Disk Block or the lack of one - and never from its name. The pane tells you which you have: a partitioned drive opens on its partition table, a bare hardfile opens straight into its files.</div>

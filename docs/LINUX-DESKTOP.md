@@ -185,8 +185,8 @@ The complete safety and troubleshooting workflow is in the
 
 A hard drive or CompactFlash card taken from an Amiga, or the SD card from a
 PiStorm, can be attached through a USB adapter and opened where it is. Choose
-**Open attached drive** on an empty pane, or **File → Open attached drive…**
-in any pane. Only drives behind a USB controller are listed; the machine's own
+**Open attached drive** on an empty pane, or **File → Open or initialise
+attached drive…** in any pane. Only drives behind a USB controller are listed; the machine's own
 disks never are.
 
 The drive can be partitioned with a Rigid Disk Block, as HDToolBox leaves it,
@@ -249,6 +249,64 @@ copied is only ever read.
 A drive that Linux has mounted, even one partition of it, is refused, because
 two systems writing to one drive corrupt it. Unmount it in the file manager
 first. A card whose write-protect switch is on can be browsed but not changed.
+
+### Preparing a new card
+
+A new card, or one that held something else, has nothing on it to open. Choose
+it in the **Open attached drive** list and then **Initialise…**. The card is
+given either partitions with a Rigid Disk Block, laid out in the same editor
+that creates a drive image, or one volume with no partition table. The size is
+the card's own, to the byte.
+
+Only the blocks that describe the new drive are written, so a 128 GB card is
+ready in seconds. Everything the card held can no longer be reached, so the
+card is named again in a confirmation before anything is written. The start of
+the card and its last mebibyte are cleared, which removes the partition table
+it had before and, with GPT, that table's second copy at the end. Linux then
+stops offering to mount partitions that no longer exist.
+
+The card opens in the pane once it is ready, with writes allowed unless you
+untick that, so Workbench and software can be installed straight onto it. That
+is the point of preparing a card in place: what is installed goes onto the
+thing that will be put in the Amiga, and nothing has to be copied across
+afterwards.
+
+### Writing a drive image to a card
+
+**File → Write image to attached drive…** puts the drive image in the pane onto
+a card. Only what the image holds is written: the image of a 128 GB card with
+Workbench installed holds about 40 MB, and writing and checking that takes
+seconds. Tick **Write every byte** to write the empty space as well, which
+leaves nothing of what the card held before and takes as long as the card is
+large.
+
+The card must be at least as large as the image, unmounted, writable and not
+open in a pane. One that cannot take the image says why. What is written is
+read back from the card and compared with the image, and a card that does not
+hold what was written to it is reported as faulty.
+
+A card larger than the image has room left over. Open the card, choose
+**Tools → Partitions…** and then **Claim the rest of the drive**, and the room
+becomes available for another partition. Nothing already on the card moves.
+
+### Saving a large drive image
+
+The ordinary save builds a ZIP of the image, which for a drive of a hundred
+gigabytes would write a hundred gigabytes. **File → Save drive image to a
+file…** saves the image as it is, to a file that reports the drive's full size
+and takes only the room its contents need. **Save image** does the same of its
+own accord for a drive image of 2 GB or more.
+
+The same dialog saves one partition on its own, as a hardfile with its `.geo`,
+and saves a volume that has no partition table as a drive that has one, with
+the handler it needs.
+
+The web edition has neither of these commands. Its save reads every byte of
+the drive to build the download, so it says how long that will take and asks
+before it starts.
+
+A sparse file stays small on ext4, XFS and Btrfs. Copying it to a filing system
+or a service that does not keep empty space empty makes it take its full size.
 
 ## Emulator paths
 

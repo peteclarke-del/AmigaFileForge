@@ -1037,6 +1037,10 @@ def format_pfs3_volume(
     accepts, 31 as the handler formats unless raised, up to 106.
     """
     name = encode_name(label, MAX_DISKNAME, "volume name")
+    # The volume is written through a handle of its own, at its own block
+    # size. Anything the caller has written and not yet flushed would reach
+    # the file after it, so it is flushed first.
+    reader.flush()
     if block_size not in (512, 1024, 2048, 4096) or block_size < reader.block_size:
         raise DataError("The PFS3 block size must be 512, 1024, 2048 or 4096 bytes.")
     fnsize = int(name_length) + 1

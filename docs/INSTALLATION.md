@@ -259,6 +259,7 @@ The Compose service defines these settings:
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `AMIGA_FILE_FORGE_WORK_DIR` | `/app/work` | Working-session and job storage inside the container |
+| `AMIGA_FILE_FORGE_HANDLER_DIR` | `/app/work/handlers` | Where filing-system handlers supplied to the service are kept, for everyone who uses it |
 | `AMIGA_MAX_UPLOAD_GIB` | `8` | Maximum accepted browser upload size in GiB |
 | `AMIGA_FILE_FORGE_PORT` | `8674` | Host port for the web UI and JSON API |
 | `AMIGA_FILE_FORGE_VNC_PORT` | `8675` | Host port for the noVNC emulator display |

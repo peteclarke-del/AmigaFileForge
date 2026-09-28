@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 
 PLATFORM_CONTRACT_FORMAT = "amiga-file-forge-platform-contract"
-PLATFORM_CONTRACT_VERSION = 9
+PLATFORM_CONTRACT_VERSION = 10
 PLATFORM_KINDS = frozenset({"web", "desktop"})
 
 # A capability belongs here only when both hosts expose the same implementation
@@ -65,6 +65,11 @@ HOST_EXCLUSIVE_ENDPOINTS = {
         "desktop.export_attached_drive",
         "desktop.drive_clone_options",
         "desktop.clone_attached_drive",
+        "desktop.initialise_attached_drive",
+        "desktop.drive_write_options",
+        "desktop.write_image_to_drive",
+        "desktop.save_drive_image_options",
+        "desktop.save_drive_image",
         "app_update.install_app_update",
         "app_update.cancel_app_update",
         "app_update.restart_after_app_update",

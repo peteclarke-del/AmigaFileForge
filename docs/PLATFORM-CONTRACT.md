@@ -86,6 +86,31 @@ Copying the drive onto another attached drive is a desktop route too. Its
 target is chosen from the attached-drive list, never from a path, and the
 request has to name it a second time as confirmation before it is erased.
 
+Platform contract version 10 records large drives. Planning a drive, creating
+one from a layout, keeping filing-system handlers and changing the partition
+table of an open drive are shared: both hosts serve the same routes, and the
+partition editor is the same page in both. Three things are desktop routes,
+under the capabilities already there. Preparing an attached card in place and
+writing a drive image to one belong to `attached-drive-access`, for the reason
+opening a drive does, and both name the drive to be erased a second time
+before anything is written. Saving a drive image straight to a path on the
+host belongs to `native-file-chooser`. The web host saves through the browser,
+which has no way to receive a file that is mostly empty space without
+receiving the empty space.
+
+Where a supplied handler is kept follows how the application was installed,
+and is the same rule in both hosts: a copy installed for one person keeps it
+for that person, and a copy installed for the whole machine, which the Docker
+service always is, keeps it for everyone who uses that copy. What differs is
+who may be asked for an administrator's password when the machine-wide
+directory is not writable. The desktop host asks through `pkexec`, because it
+runs in the session of the person at the machine. The web host never does,
+because the person pressing the button may be on another computer, and says
+what an administrator can run instead.
+
+Saving a large drive is where the hosts differ most for the person using them.
+The web host says how long its save will take and asks before it starts.
+
 ## Storage and security
 
 The web host uses the configured Docker work directory and browser-owner
