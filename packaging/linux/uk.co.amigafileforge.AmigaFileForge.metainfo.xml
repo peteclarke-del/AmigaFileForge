@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
   <releases>
+    <release version="1.7.1" date="2026-09-28">
+      <description>
+        <p>Installs AmigaOS 3.5 and 3.9 from CD onto an empty drive, starting the machine from the system the disc carries. The emulator is now given the drive itself, so what an installer writes is kept, and a drive is reachable by FS-UAE installed as a snap.</p>
+      </description>
+    </release>
     <release version="1.7.0" date="2026-09-28">
       <description>
         <p>Creates hard drives of up to 2 TB, such as the image of a 128 GB CompactFlash card, with a partition editor and the filing-system handlers the partitions need. Partitions can be added, removed, formatted and renamed. A card attached through USB can be partitioned in place or have an image written to it, and a drive image is saved without its empty space.</p>
