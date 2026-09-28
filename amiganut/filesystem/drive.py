@@ -401,6 +401,10 @@ def clear_drive_ends(reader: BlockReader) -> None:
     reader.write_range(0, b"\0" * span)
     if length > 2 * span:
         reader.write_range(length - span, b"\0" * span)
+    # A formatter opens the drive for itself, so what is written here has to
+    # have reached the file first. Left in this handle's buffer, the zeros
+    # would arrive after the volume and take its root block with them.
+    reader.flush()
 
 
 def format_window(
@@ -451,6 +455,7 @@ def format_partition(
         # system was there before. It is cleared first so that a volume which
         # names itself one thing is never found under a table saying another.
         window.write_range(0, b"\0" * min(64 * 1024, window.total_blocks * window.block_size))
+        window.flush()
         format_window(window, chosen, label, bootable=partition.bootable, partition=partition)
     finally:
         window.close()

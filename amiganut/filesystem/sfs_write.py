@@ -1181,6 +1181,10 @@ def format_sfs_volume(
     name = validate_sfs_name(label)
     if len(name) > 30:
         raise DataError("An SFS volume name can be at most 30 characters long.")
+    # The volume is written through a handle of its own, at its own block
+    # size. Anything the caller has written and not yet flushed would reach
+    # the file after it, so it is flushed first.
+    reader.flush()
     if block_size < 512 or block_size & (block_size - 1) or block_size % reader.block_size:
         raise DataError("The SFS block size must be a power of two of at least 512 bytes.")
     blocks = BlockReader(
