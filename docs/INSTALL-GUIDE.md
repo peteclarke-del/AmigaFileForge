@@ -90,50 +90,108 @@ so rather than leaving you with a drive that silently will not start.
 
 ## AmigaOS 3.5 and 3.9, which came on CD
 
-These two releases are not installed the way 3.1 is, and it is worth being
-plain about why. There is no tree to copy. The disc carries a Commodore
-Installer script of two hundred kilobytes that runs on the Amiga, reads the
-versions of the libraries the live system has loaded, asks a great many
-questions and writes the system where it is told to. Its own words are that
-"Pretend mode cannot be used with this installation script". The 3.9 script
-offers an update over 3.5 and a "full installation over OS3.0 or empty HD".
-
-So Amiga File Forge does not install them. What it does is everything up to
-that point, which is the part that otherwise costs an afternoon to discover.
+These two releases were published on CD, and Amiga File Forge installs them
+itself. When the installation finishes the drive holds the system and starts
+the machine. There is nothing left to do inside an emulator.
 
 Choose **Tools -> Install AmigaOS 3.5 or 3.9** with a partition open, then
 point it at the ISO of the disc you own. Nothing is downloaded, and no AmigaOS
 is shipped.
 
-Three things are checked before anything starts:
+### How the installation is made
+
+A CD carries the system already laid out as directory trees, so an
+installation is a copy made in the right order. Every source and destination
+was read out of the Installer script each disc carries, `OS3.5Install` and
+`OS3.9Install`, and is the same layout the PiStorm imager writes.
+
+| Release | Layers, in the order they are laid down |
+| --- | --- |
+| AmigaOS 3.9 | `Workbench3.5`, a complete system, then `Workbench3.9` over it, then Locale, keymaps, printer drivers, the updated commands, FastFileSystem, the extra libraries and the backdrops |
+| AmigaOS 3.5 | Workbench 3.1 and Extras 3.1 from the disc's own `OS-Version3.1` drawer, then the 3.5 `Workbench` over them, then the same additions |
+
+Several destinations are not the obvious ones. `Extras/Backdrops` goes to
+`Prefs/Presets/Backdrops`, and the keymaps and printer drivers are copied out
+of `Storage` into `Devs` while staying in `Storage` as well.
+
+The layers are resolved by name before anything is written, so each file is
+written once, from the newest layer that supplies it. Protection bits and file
+comments recorded on the disc are kept.
+
+Every language, keymap and printer driver on the disc is installed. The disc's
+own installer asks which to leave out. Leaving nothing out costs a few
+megabytes and means nothing has to be fetched from the disc later.
+
+### What is checked first
 
 - **The disc.** It is identified by the volume name Commodore wrote,
-  `AmigaOS3.5` or `AmigaOS3.9`, and then confirmed by looking for that
-  release's own drawer. A contribution CD or an OS4 disc is not accepted on a
-  similar name alone.
+  `AmigaOS3.5` or `AmigaOS3.9`, and confirmed by its system trees. A disc whose
+  name has been changed is recognised by those trees. A disc that lacks a tree
+  the release cannot do without is refused, and the tree is named.
 - **The processor.** Both releases need a 68020 or better. An A1200, A3000,
   A4000 or CD32 qualifies on its own, and so does any machine carrying a
   68020, 68030, 68040 or 68060 accelerator, or a PiStorm. A stock A500 or A600
-  cannot run either release, and is told so rather than left to find out from
-  a machine that will not start.
-- **The drive.** The installer runs on the Amiga, so something has to start
-  the machine. A drive with a system on it starts itself. An empty drive is
-  started from the system the disc carries, described below. Only an empty
-  drive and a disc with no such system leave nothing to be done but install
-  Workbench 3.1 first, and the dialog offers to do that.
+  cannot run either release, and is told so before anything is written.
+- **The drive.** A partition has to be open, and it has to have room. It does
+  not need a system on it.
 
-The dialog reports the disc and the drive separately. A disc that is
-recognised is said to be fine, so that a drive which is not ready does not
-read as a disc that failed. Every blocking reason is reported at once rather
-than one at a time, because fixing one and running again is exactly the slow
-loop the check exists to avoid.
+The dialog then lists what will be installed, layer by layer, with where each
+lands and how many files it supplies.
 
-When all three are in order, **Boot with the CD** starts the machine with the
-disc in the CD drive. Open the disc on the Workbench and run its installation
-icon; it will ask where to install and what to include. Close the emulator when
-the installer has finished.
+### Installing over a system that is already there
 
-### Installing onto an empty drive
+A file on the drive is replaced when the release carries one of the same name,
+which is what makes installing over Workbench 3.1 an upgrade. Everything the
+release does not carry is left exactly as it was, so software already on the
+drive stays. `S/User-Startup` is never replaced.
+
+An undo point is taken first, and **Edit -> Undo last change** puts the drive
+back as it was.
+
+### Update packs
+
+A CD installation is not a finished system. Both releases had update packs
+published after them, the BoingBags. In the same dialog, choose **Choose
+BoingBag archives** and pick the LHA archives you have. One archive may hold
+several packs, and the packs are found inside it at whatever depth. Each pack
+found is listed with a tick box, and they are applied oldest first.
+
+| Pack | How it is applied |
+| --- | --- |
+| BoingBag 1 and 2 for AmigaOS 3.5 | Copied over the system |
+| BoingBag 1 and 2 for AmigaOS 3.9 | Plain files are copied. The system fixes are applied by the pack's own Updater |
+| BoingBags 3 and 4 for AmigaOS 3.9 | Copied over the system, with the build of each library chosen for the processor in the hardware profile |
+
+BoingBags 1 and 2 for 3.9 keep their fixes in `AmigaOS-Update`, an archive in
+which every file is encrypted and which only Haage & Partner's `Updater` can
+open. Amiga File Forge does not open it. It runs the pack's own `Updater` in
+FS-UAE, on a copy of the system being installed, with the release disc
+attached because the Updater looks for it. The emulator opens a window of its
+own for a few minutes for each pack and closes it again. Nothing needs doing
+in that window. What the Updater produced is then written to the drive with
+the rest of the system.
+
+That needs FS-UAE and a Kickstart 3.1 ROM for the machine in the hardware
+profile. Where either is missing the dialog says so beforehand, the plain
+files of those packs are still installed, and every fix that could not be
+applied is listed by name afterwards.
+
+BoingBags 3 and 4 are a community release. They replace core components and
+expect BoingBags 1 and 2 underneath. Untick them for a stock system.
+
+## Running the disc's own installer instead
+
+The same dialog offers **Run the disc's installer instead**, for somebody who
+wants to choose what the installer leaves out or to use something else on the
+disc. This is not needed to install the release. It starts the machine in the
+emulator with the disc in its CD drive and hands over the keyboard.
+
+Something has to start the machine. A drive with a system on it starts itself,
+and an empty drive is started from the system the disc carries, described
+below. With an empty drive and a disc that carries no such system, the button
+is not available.
+
+### Starting from an empty drive
 
 A newly partitioned drive has nothing on it to start a machine from. Both
 discs carry a complete system in a drawer called `Emergency-Boot`, which is

@@ -17,6 +17,7 @@ from typing import BinaryIO, Callable
 from .ffs_install_service import FFSInstallMixin
 from .install_service import InstallMixin
 from .iso_disk_service import IsoDiskMixin
+from .amigaos_cd_install import AmigaosCdInstallMixin
 from .workbench_install import WorkbenchInstallMixin
 from .hardfile_geometry import (
     BLOCK_SIZE as HARDFILE_SECTOR_SIZE,
@@ -117,6 +118,7 @@ class DiskService(
     InstallMixin,
     IsoDiskMixin,
     WorkbenchInstallMixin,
+    AmigaosCdInstallMixin,
     RdbPartitionMixin,
     DriveLayoutMixin,
     RomDiskMixin,
@@ -3232,8 +3234,18 @@ class DiskService(
                             mount.set_amiga_meta(
                                 plan["destination"],
                                 AmigaMeta(
+                                    # A number is the protection long
+                                    # itself, as a listing reports it. Only
+                                    # text is what a person typed, and only
+                                    # that is read as letters or hexadecimal.
+                                    # Reading the number 32 as the digits
+                                    # "32" turns a pure command into one
+                                    # that is not executable.
                                     protection=(
-                                        self._protection_value(supplied)
+                                        int(supplied)
+                                        if isinstance(supplied, int)
+                                        and not isinstance(supplied, bool)
+                                        else self._protection_value(supplied)
                                         if supplied
                                         else current.protection
                                     ),
