@@ -205,8 +205,17 @@ def emulator_command(
     native: bool = False,
     floppies: list[str | Path] | None = None,
     cdroms: list[str | Path] | None = None,
+    boot_drive: str | Path | None = None,
+    read_only: bool = False,
 ) -> tuple[list[str], str]:
     """Build the command line that boots one image, optionally with discs.
+
+    ``boot_drive`` is a second hard drive for the machine to start from when
+    the first has nothing on it to boot, which is how an empty drive is
+    installed onto. It carries its own boot priority in its partition table.
+
+    ``read_only`` attaches the hard drive so that nothing the machine does is
+    written to it, which is what running a drive to look at it wants.
 
     ``floppies`` exists for installing a title onto a drive: the machine boots
     from the hard drive and the title's disc is already in DF0:, which is what
@@ -227,6 +236,10 @@ def emulator_command(
     media = Path(media_path)
     suffix = media.suffix.lower()
     boot = str(profile.get("emulatorBoot") or "auto")
+    # A launch can carry these with it, so that every caller that builds a
+    # command for a staged drive attaches it the way it was staged.
+    read_only = read_only or bool(profile.get("emulatorReadOnly"))
+    boot_drive = boot_drive or profile.get("emulatorBootDrive") or None
     machine = profile_machine(session)
     kickstart = kickstart_for(machine)
 
@@ -256,6 +269,11 @@ def emulator_command(
         attached = [Path(item) for item in (floppies or [])]
         if suffix in DRIVE_SUFFIXES:
             arguments.append(f"--hard_drive_0={media}")
+            if read_only:
+                arguments.append("--hard_drive_0_read_only=1")
+            if boot_drive is not None:
+                arguments.append(f"--hard_drive_1={Path(boot_drive)}")
+                arguments.append("--hard_drive_1_read_only=1")
         else:
             attached.insert(0, media)
         if len(attached) > MAXIMUM_FLOPPY_DRIVES:

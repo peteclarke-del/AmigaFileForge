@@ -65,7 +65,9 @@ from ..file_editor import (
     verify_basic_source,
     encode_editor_replacement,
 )
-from ..fat_media import FatMediaError, build_hdf_card
+from ..emergency_boot import build_boot_drive
+from ..emulator_media import StagedMedia
+from ..fat_media import FatMediaError
 from ..operations import OperationRegistry
 from ..platform_contract import PlatformRuntime
 from ..workflow_recipe import build_workflow_recipe_bundle
@@ -323,25 +325,45 @@ def create_tools_blueprint(
         finally:
             service.discard_session(scratch)
 
-    @contextmanager
-    def whole_drive_media(session, configured):
-        """Expose the complete hard drive to the emulator as one attached drive."""
+    def emulator_finished(session, wrote: bool) -> None:
+        """Record what a run of the emulator may have done to the image."""
+        if not wrote:
+            return
+        with session.lock:
+            session.ffs_capabilities = {}
+            service._mark_mutated(session)
+            if session.kind == "hdf" and session.partition is not None:
+                service.refresh_ffs_capabilities(session)
+            service._persist_session(session)
+
+    def whole_drive_media(session, configured, *, writable: bool = False):
+        """Attach the complete hard drive to the emulator, as the image itself.
+
+        The emulator is given the image in the pane, not a copy, so that an
+        installer run there installs onto the drive. A run that is only to
+        look at the drive attaches it read-only, and then nothing the machine
+        does is written to it.
+        """
         if session.kind != "hdf":
             raise DiskError("A whole-drive launch requires a hard-drive image.")
-        temporary = tempfile.NamedTemporaryFile(
-            dir=service.work_dir, prefix="hdf-card-", suffix=".img", delete=False,
-        )
-        path = Path(temporary.name)
-        temporary.close()
+        if session.attached_device:
+            raise DiskError(
+                "A drive opened in place is not handed to the emulator. Export "
+                "it to an image file and run that."
+            )
         launch = copy(configured)
+        launch.hardware_profile = dict(configured.hardware_profile or {})
+        launch.hardware_profile["emulatorReadOnly"] = not writable
         launch.emulator_media_kind = "whole-drive"
-        try:
-            build_hdf_card(session.path, path)
-            yield launch, path
-        except FatMediaError as exc:
-            raise DiskError(str(exc)) from exc
-        finally:
-            path.unlink(missing_ok=True)
+        return StagedMedia(
+            session,
+            launch,
+            executable=configured_emulator(configured).executable,
+            work_dir=service.work_dir,
+            copy_file=service._copy_local_file,
+            writable=writable,
+            finished=emulator_finished,
+        )
 
     def selected_media_probe(session, configured, *, debug: bool = False):
         """Build a command for a target without extracting or changing its bytes."""
@@ -1163,11 +1185,15 @@ def create_tools_blueprint(
         # The installer is on the hard drive's Workbench, not on the disc, so
         # the machine must boot the drive rather than the disc in DF0:.
         launch.hardware_profile["emulatorBoot"] = "boot"
+        media = whole_drive_media(session, launch, writable=True)
         try:
             arguments, started = interactive_emulator.start(
-                whole_drive_media(session, launch),
+                media,
                 debug=False,
-                floppies=[disc.path for disc in discs],
+                floppies=[
+                    media.attach(disc.path, f"df{index}-{disc.path.name}")
+                    for index, disc in enumerate(discs)
+                ],
             )
         except (ValueError, OSError, subprocess.SubprocessError) as exc:
             raise DiskError(f"The emulator could not start: {exc}") from exc
@@ -1189,7 +1215,7 @@ def create_tools_blueprint(
         })
 
     @blueprint.post("/api/images/<image_id>/install/amigaos-cd")
-    @image_mutation("activating the CD driver and booting with a release CD")
+    @image_mutation("installing AmigaOS from a release CD")
     def install_amigaos_cd(image_id):
         """Boot this drive with the AmigaOS release CD in the CD drive.
 
@@ -1211,29 +1237,40 @@ def create_tools_blueprint(
         checked = service.amigaos_cd_preflight(session, disc)
         if not checked["ready"]:
             raise DiskError(checked["blocking"][0])
-        # A stock Workbench 3.1 drive has the CD filing system in L: and the
-        # CD0 mountlist parked in Storage, which AmigaDOS does not read, so the
-        # machine would boot and see no disc at all. Switching it on is a write
-        # to the image, which is why this route declares itself a mutation and
-        # takes an undo checkpoint before it runs.
-        driver = service.activate_cd_driver(session)
+        # The installer writes to the drive, so the emulator is given the
+        # image itself, and this route declares itself a mutation so that an
+        # undo point is taken before the machine starts. Nothing is written to
+        # the drive to prepare it: the emulator mounts the disc as CD0: on its
+        # own account, and a mountlist naming the emulator's CD device would
+        # be wrong on the real machine the drive is for.
         configured = requested_emulator_session(session, data)
         launch = copy(configured)
         launch.hardware_profile = dict(configured.hardware_profile or {})
-        # The installer is reached from the Workbench already on the drive, so
-        # the machine boots the drive and finds the disc waiting in the CD
-        # drive, exactly as it would with the CD in a real machine.
         launch.hardware_profile["emulatorBoot"] = "boot"
+        media = whole_drive_media(session, launch, writable=True)
+        from_disc = checked["bootFrom"] == "disc"
         try:
+            compact_disc = media.attach(disc.path, f"cdrom{disc.path.suffix or '.iso'}")
+            if from_disc:
+                # An empty drive cannot start the machine, so it is started
+                # from the system the disc carries, on a drive of its own.
+                boot_drive = media.folder / "emergency-boot.hdf"
+                build_boot_drive(disc.path, boot_drive)
+                media.launch.hardware_profile["emulatorBootDrive"] = str(boot_drive)
             arguments, started = interactive_emulator.start(
-                whole_drive_media(session, launch),
+                media,
                 debug=False,
-                cdroms=[disc.path],
+                cdroms=[compact_disc],
             )
         except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            media.__exit__(None, None, None)
             raise DiskError(f"The emulator could not start: {exc}") from exc
+        except DiskError:
+            media.__exit__(None, None, None)
+            raise
         emulator = configured_emulator(started)
         release = checked["disc"]
+        device = service.partition_label(session) or "the drive"
         return jsonify(result={
             "time": datetime.now(timezone.utc).isoformat(),
             "command": arguments[0],
@@ -1242,12 +1279,19 @@ def create_tools_blueprint(
             "machine": str(started.hardware_profile.get("machine") or ""),
             "release": release.get("label", ""),
             "disc": disc.name,
-            "cdDriver": driver,
+            "bootFrom": checked["bootFrom"],
             "warnings": checked.get("warnings", []),
             "summary": (
+                f"{emulator.label} has started from the disc's emergency system, with "
+                f"{release.get('label', 'the disc')} in the CD drive as CD0:. Open the "
+                f"disc on the Workbench, run its installation icon, choose the full "
+                f"installation and give it {device}. Close the emulator when it has "
+                f"finished."
+                if from_disc else
                 f"{emulator.label} is running with {release.get('label', 'the disc')} "
                 f"in the CD drive as CD0:. Open the disc on the Workbench and run its "
-                f"installation icon; it will ask where to install and what to include."
+                f"installation icon; it will ask where to install and what to include. "
+                f"Close the emulator when it has finished."
             ),
             "displayMode": "native" if runtime.kind == "desktop" else "browser",
             **({} if runtime.kind == "desktop" else {"viewerPort": 8668}),
