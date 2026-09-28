@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
   <releases>
+    <release version="1.7.0" date="2026-09-28">
+      <description>
+        <p>Creates hard drives of up to 2 TB, such as the image of a 128 GB CompactFlash card, with a partition editor and the filing-system handlers the partitions need. Partitions can be added, removed, formatted and renamed. A card attached through USB can be partitioned in place or have an image written to it, and a drive image is saved without its empty space.</p>
+      </description>
+    </release>
     <release version="1.6.0" date="2026-09-24">
       <description>
         <p>Opens a hard drive or memory card from an Amiga, attached through a USB adapter, where it is. The drive opens read-only and takes changes once writes are allowed, and it can be exported to an image file or copied onto another attached drive. Reads and writes the Smart File System and PFS3 as well as every variant of FFS, and keeps Directory Cache volumes correct. Fixes copying files between panes, which failed for hard-drive partitions and, for floppies, did not work at all.</p>
