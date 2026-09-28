@@ -1214,21 +1214,16 @@ def create_tools_blueprint(
             **({} if runtime.kind == "desktop" else {"viewerPort": 8668}),
         })
 
-    @blueprint.post("/api/images/<image_id>/install/amigaos-cd")
-    @image_mutation("installing AmigaOS from a release CD")
-    def install_amigaos_cd(image_id):
+    @blueprint.post("/api/images/<image_id>/install/amigaos-cd/boot")
+    @image_mutation("running the installer on an AmigaOS release CD")
+    def boot_amigaos_cd(image_id):
         """Boot this drive with the AmigaOS release CD in the CD drive.
 
-        The installation is Commodore's work, not this application's. AmigaOS
-        3.5 and 3.9 are installed by a script on the disc that reads the
-        versions the live system has loaded, asks a great many questions and
-        patches an existing installation in place. It says of itself that
-        pretend mode cannot be used with it, so there is no unattended path
-        and pretending otherwise would produce a drive that does not boot.
-
-        What can be done from here is everything up to that point: check the
-        disc, the processor and the drive, then put the machine in the state
-        the script needs and hand over the keyboard.
+        This is not the installation. That is made directly, by the install
+        route, and needs no emulator. This is for somebody who wants to run
+        the disc's own installer by hand, to choose what it leaves out or to
+        use one of the other things on the disc. The machine is started with
+        the disc in its CD drive and the keyboard is handed over.
         """
         session = service.get(image_id)
         data = payload()
@@ -1237,6 +1232,11 @@ def create_tools_blueprint(
         checked = service.amigaos_cd_preflight(session, disc)
         if not checked["ready"]:
             raise DiskError(checked["blocking"][0])
+        if not checked["bootFrom"]:
+            raise DiskError(
+                "This drive has no AmigaOS on it to start the machine from, and "
+                "the disc carries no emergency system to start it from instead."
+            )
         # The installer writes to the drive, so the emulator is given the
         # image itself, and this route declares itself a mutation so that an
         # undo point is taken before the machine starts. Nothing is written to

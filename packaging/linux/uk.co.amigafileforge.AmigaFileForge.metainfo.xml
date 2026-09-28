@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AmigaFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AmigaFileForge/issues</url>
   <releases>
+    <release version="1.8.0" date="2026-09-28">
+      <description>
+        <p>Installs AmigaOS 3.5 and 3.9 from the release CD directly onto the drive, with nothing left to finish in an emulator, and applies the BoingBag update packs over the top. Protection bits are now kept exactly when files are copied between volumes.</p>
+      </description>
+    </release>
     <release version="1.7.1" date="2026-09-28">
       <description>
         <p>Installs AmigaOS 3.5 and 3.9 from CD onto an empty drive, starting the machine from the system the disc carries. The emulator is now given the drive itself, so what an installer writes is kept, and a drive is reachable by FS-UAE installed as a snap.</p>

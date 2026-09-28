@@ -3988,55 +3988,83 @@ function paneHoldsVolume(pane) {
 }
 
 
-//: Installing AmigaOS 3.5 or 3.9, which were published on CD and are not
-//: installed the way 3.1 is.
+//: Installing AmigaOS 3.5 or 3.9, which were published on CD.
 //:
-//: There is no tree to copy. The disc carries a Commodore Installer script
-//: that runs on the Amiga, reads the versions the live system has loaded,
-//: asks a great many questions and patches an existing installation in place.
-//: So this checks everything that can be checked from here, then boots the
-//: machine with the disc in the CD drive and hands over the keyboard.
+//: The disc carries the system as directory trees, so the installation is a
+//: copy made in the right order, and it is made here and written straight
+//: into the drive. The update packs published afterwards go over the top.
+//: Running the disc's own installer under emulation is still offered, as the
+//: lesser choice, for somebody who wants to pick what it leaves out.
 async function showAmigaosCdInstall(index) {
   const pane = panes[index];
   if (!paneAcceptsInstall(pane)) {
     return alertNotice(
       "Install AmigaOS 3.5 or 3.9",
-      "These releases update a system on a hard drive, so open a partition on one first.",
+      "These releases install onto a hard drive, so open a partition on one first.",
       { confirmLabel: "Close" },
     );
   }
   const releases = await api("/api/install/amigaos-cd/releases").catch(() => ({ releases: [] }));
+  const target = volumeLabel(pane) || pane.image.name;
   let disc = null;
+  let checked = null;
+  let packFiles = [];
+  let packsFound = [];
+  let warnings = [];
+  let report = null;
 
   const closed = showModal(`
     <h2>Install AmigaOS 3.5 or 3.9</h2>
-    <p>Starts the machine with the release CD in its CD drive and ${esc(volumeLabel(pane) || pane.image.name)} attached, so that the disc's installer can install onto it.</p>
-    <div class="help-note"><strong>The installer is Commodore's.</strong> These releases are installed by a script on the disc that reads the running system and asks where things should go. It cannot be run unattended, so this checks what it can and then hands you the machine with everything in place. A drive with nothing on it is started from the emergency system the disc carries.</div>
+    <p>Installs the release from its CD onto ${esc(target)}, with the update packs you add. The drive is written here, so there is nothing to finish on the Amiga afterwards.</p>
+    <div class="help-note"><strong>Your own disc:</strong> Amiga File Forge does not ship AmigaOS and cannot fetch it. Use the ISO of the AmigaOS ${esc((releases.releases || []).map(r => r.key).join(" or ") || "3.5 or 3.9")} disc you own.</div>
     <div class="field"><label>Release CD</label>
-      <button type="button" class="button" data-choose-cd>Choose a CD image…</button>
-      <small>The ISO of the AmigaOS ${esc((releases.releases || []).map(r => r.key).join(" or ") || "3.5 or 3.9")} disc you own. Nothing is downloaded.</small></div>
+      <button type="button" class="button" data-choose-cd>Choose a CD image…</button></div>
     <div class="file-selection-summary" data-cd-summary>
       <span class="file-selection-empty">No CD chosen yet.</span>
     </div>
     <div data-cd-preflight hidden></div>
+    <div class="field"><label>Update packs</label>
+      <button type="button" class="button" data-choose-packs>Choose BoingBag archives…</button>
+      <small>Optional. The LHA archives of the BoingBags for the release, in any order. One archive may hold several packs.</small></div>
+    <div class="file-selection-summary" data-pack-summary>
+      <span class="file-selection-empty">No update packs chosen.</span>
+    </div>
+    <div data-pack-survey hidden></div>
+    <div class="field"><label>Or run it by hand</label>
+      <button type="button" class="button ghost" data-boot-cd disabled>Run the disc's installer instead…</button>
+      <small>Not needed to install the release. Starts the emulator with the disc in its CD drive, for choosing what the disc's own installer leaves out.</small></div>
     <div class="modal-actions">
       <button class="button ghost" value="cancel">Cancel</button>
-      <button class="button primary" value="boot" data-boot-cd disabled>Boot with the CD</button>
+      <button class="button primary" value="install" data-install-cd disabled>Install AmigaOS</button>
     </div>`,
   async () => {
     if (!disc) throw new Error("Choose the release CD first.");
-    const result = await trackedPaneOperation(index, "Starting the emulator…", () =>
-      api(`/api/images/${pane.image.id}/install/amigaos-cd`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ disc: disc.id, partition: pane.partition }),
-      }));
-    toast(result.result.summary);
+    const chosen = [...modalContent.querySelectorAll("[data-pack]:checked")].map(box => box.value);
+    const body = new FormData();
+    body.append("disc", disc.id);
+    if (pane.partition !== null && pane.partition !== undefined) body.append("partition", pane.partition);
+    if (packsFound.length) {
+      body.append("chosenPacks", chosen.join(","));
+      if (chosen.length) packFiles.forEach(file => body.append("packs", file, file.name));
+    }
+    const result = await trackedPaneOperation(index, "Installing AmigaOS…", operationId => {
+      body.append("operationId", operationId);
+      return uploadApi(`/api/images/${pane.image.id}/install/amigaos-cd`, body);
+    });
+    pane.image = result.image;
+    await loadDirectory(index);
+    report = result.amigaos;
+    warnings = report.warnings || [];
+    const applied = (report.packs || []).filter(pack => !pack.locked || pack.applied);
+    toast(`${report.release} installed: ${report.written} files written${applied.length ? `, with ${applied.length} update pack${applied.length === 1 ? "" : "s"}` : ""}.`);
     return true;
   });
 
   const summary = modalContent.querySelector("[data-cd-summary]");
   const preflight = modalContent.querySelector("[data-cd-preflight]");
+  const packSummary = modalContent.querySelector("[data-pack-summary]");
+  const packSurvey = modalContent.querySelector("[data-pack-survey]");
+  const install = modalContent.querySelector("[data-install-cd]");
   const boot = modalContent.querySelector("[data-boot-cd]");
 
   //: The disc is opened as an ordinary image session, so it is read by the
@@ -4049,12 +4077,18 @@ async function showAmigaosCdInstall(index) {
   };
   modal.addEventListener("close", () => { release(); }, { once: true });
 
+  const showPacks = () => {
+    const key = checked?.disc?.release || "";
+    renderAmigaosPacks(packSurvey, packsFound, key, checked?.updater);
+  };
+
   modalContent.querySelector("[data-choose-cd]").onclick = async () => {
     const files = await pickHostFiles({ accept: ".iso,.cdr" });
     if (!files.length) return;
     await release();
     summary.className = "file-selection-summary has-files";
     summary.innerHTML = `<span>Reading ${esc(files[0].name)}…</span>`;
+    install.disabled = true;
     boot.disabled = true;
     preflight.hidden = true;
     try {
@@ -4062,25 +4096,86 @@ async function showAmigaosCdInstall(index) {
       upload.append("image", files[0]);
       upload.append("targetHardware", "auto");
       disc = (await uploadApi("/api/images", upload)).image;
-      const checked = (await api(`/api/images/${pane.image.id}/install/amigaos-cd/preflight`, {
+      checked = (await api(`/api/images/${pane.image.id}/install/amigaos-cd/preflight`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ disc: disc.id, partition: pane.partition }),
       })).preflight;
-      renderAmigaosCdPreflight(summary, preflight, boot, checked, files[0].name, index);
+      renderAmigaosCdPreflight(summary, preflight, install, boot, checked, files[0].name);
+      showPacks();
     } catch (error) {
       summary.className = "file-selection-summary chooser-failed";
       summary.innerHTML = `<span>${esc(error.message)}</span>`;
     }
   };
 
+  modalContent.querySelector("[data-choose-packs]").onclick = async () => {
+    const files = await pickHostFiles({ accept: ".lha,.lzh" });
+    if (!files.length) return;
+    packSummary.className = "file-selection-summary has-files";
+    packSummary.innerHTML = `<span>Reading ${files.length} archive${files.length === 1 ? "" : "s"}…</span>`;
+    try {
+      const upload = new FormData();
+      files.forEach(file => upload.append("packs", file, file.name));
+      const found = await rawUploadApi("/api/install/amigaos-cd/packs", upload);
+      packFiles = files;
+      packsFound = found.packs || [];
+      const ignored = found.unrecognised || [];
+      packSummary.innerHTML = `<span>${packsFound.length
+        ? `<strong>${packsFound.length} update pack${packsFound.length === 1 ? "" : "s"} found</strong> in ${files.length} archive${files.length === 1 ? "" : "s"}.`
+        : "<strong>No update pack was found</strong> in what was chosen."}${
+        ignored.length ? ` Not a BoingBag: ${esc(ignored.join(", "))}.` : ""}</span>`;
+      if (!packsFound.length) packSummary.className = "file-selection-summary chooser-failed";
+      showPacks();
+    } catch (error) {
+      packFiles = [];
+      packsFound = [];
+      packSurvey.hidden = true;
+      packSummary.className = "file-selection-summary chooser-failed";
+      packSummary.innerHTML = `<span>${esc(error.message)}</span>`;
+    }
+  };
+
+  boot.onclick = async () => {
+    if (!disc) return;
+    const chosenDisc = disc;
+    // The emulator keeps reading the disc after this dialog has gone, so the
+    // session is handed over rather than released with the dialog.
+    disc = null;
+    modal.close();
+    try {
+      const result = await trackedPaneOperation(index, "Starting the emulator…", () =>
+        api(`/api/images/${pane.image.id}/install/amigaos-cd/boot`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ disc: chosenDisc.id, partition: pane.partition }),
+        }));
+      toast(result.result.summary);
+    } catch (error) {
+      alertNotice("The emulator did not start", error.message, { confirmLabel: "Close" });
+    }
+  };
+
+  closed.then(() => {
+    if (!report) return;
+    const left = (report.packs || []).filter(pack => pack.locked && !pack.applied);
+    if (!warnings.length && !left.length) return;
+    const names = left.flatMap(pack => pack.leftOut || []);
+    alertNotice(
+      `${report.release} installed, with warnings`,
+      warnings.join("\n\n") + (names.length
+        ? `\n\nThe files that were not applied:\n${names.join("\n")}`
+        : ""),
+      { confirmLabel: "Close" },
+    );
+  });
   return closed;
 }
 
 //: What the preflight found, said plainly. Every blocking reason is shown
 //: rather than only the first, because an operator fixing one at a time and
 //: rerunning is exactly the slow loop the check exists to avoid.
-function renderAmigaosCdPreflight(summary, host, boot, checked, filename, index) {
+function renderAmigaosCdPreflight(summary, host, install, boot, checked, filename) {
   const found = checked.disc || {};
   // The disc and the drive are judged separately and said separately. A
   // drive that is not ready under a disc that is reads, at a glance, as a
@@ -4093,22 +4188,52 @@ function renderAmigaosCdPreflight(summary, host, boot, checked, filename, index)
   const aboutDisc = item => !found.recognised && item === found.reason;
   const blocking = checked.blocking.filter(item => !aboutDisc(item));
   const notes = checked.notes || [];
+  const plan = checked.plan || {};
+  const layers = plan.layers || [];
   host.hidden = false;
   host.innerHTML = `
     ${blocking.length ? `<div class="help-warning"><strong>${found.recognised ? "The drive is not ready:" : "Not ready yet:"}</strong><ul>${
-      blocking.map(item => `<li>${esc(item)}</li>`).join("")}</ul>${
-      checked.needsWorkbench ? '<button type="button" class="button ghost" data-install-workbench>Install Workbench 3.1 onto this drive…</button>' : ""}</div>` : ""}
+      blocking.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
+    ${checked.ready && layers.length ? `<div class="help-note"><strong>What will be installed:</strong> ${plan.files.toLocaleString()} files, ${humanSize(plan.bytes)}.
+      <table class="install-layers"><thead><tr><th>From the disc</th><th>Into</th><th>Files</th></tr></thead><tbody>${
+        layers.map(layer => `<tr><td>${esc(layer.label)}</td><td><code>${esc(layer.destination === ":" ? "the root of the drive" : layer.destination)}</code></td><td>${layer.files}</td></tr>`).join("")
+      }</tbody></table></div>` : ""}
     ${notes.length ? `<div class="help-note"><strong>How this will go:</strong><ul>${
       notes.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
     ${checked.warnings.length ? `<div class="help-note"><strong>Worth knowing:</strong><ul>${
       checked.warnings.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
     ${found.recognised && found.requires ? `<div class="help-note"><strong>${esc(found.label)} needs:</strong> ${esc(found.requires)}</div>` : ""}
-    ${checked.ready ? `<div class="help-note">Everything this can check is in order. The installer writes to this drive, so the drive cannot be changed here until the emulator is closed, and <strong>Edit → Undo last change</strong> afterwards puts the drive back as it is now.</div>` : ""}`;
-  boot.disabled = !checked.ready;
-  host.querySelector("[data-install-workbench]")?.addEventListener("click", () => {
-    modal.close();
-    setTimeout(() => guardedPaneAction(index, () => showWorkbenchInstall(index)), 0);
-  });
+    ${checked.ready ? `<div class="help-note"><strong>Edit → Undo last change</strong> afterwards puts the drive back as it is now.</div>` : ""}`;
+  install.disabled = !checked.ready;
+  boot.disabled = !(checked.ready && checked.bootFrom);
+  boot.title = boot.disabled
+    ? "Needs a system on the drive, or a disc that carries an emergency system, to start the machine from."
+    : "Starts the emulator with the disc in its CD drive, for you to run the disc's own installer.";
+}
+
+//: The update packs found in the chosen archives, each with a tick box.
+//: A pack for the other release is shown and cannot be ticked, because
+//: saying nothing about it would look as though it had been lost.
+function renderAmigaosPacks(host, packs, release, updater) {
+  if (!packs.length) {
+    host.hidden = true;
+    host.innerHTML = "";
+    return;
+  }
+  const needsUpdater = packs.some(pack => pack.lockedFiles && (!release || pack.release === release));
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="pack-list">${packs.map(pack => {
+      const fits = !release || pack.release === release;
+      return `<label class="check-field"><input type="checkbox" data-pack value="${esc(pack.key)}" ${fits && pack.defaultOn ? "checked" : ""} ${fits ? "" : "disabled"}>
+        <span><strong>${esc(pack.label)}</strong>${pack.official ? "" : " (community release)"}, from ${esc(pack.archive)}.${
+          fits ? "" : ` It is for AmigaOS ${esc(pack.release)}, not for the disc chosen.`}${
+          pack.lockedFiles ? ` ${pack.lockedFiles} of its files are applied by running its own Updater.` : ""}${
+          pack.notes && !pack.lockedFiles ? ` ${esc(pack.notes)}` : ""}</span></label>`;
+    }).join("")}</div>
+    ${needsUpdater ? (updater && !updater.available
+      ? `<div class="help-warning"><strong>The Updater cannot be run here.</strong> ${esc(updater.reason)} The files of these packs that are not locked are still installed, and the ones left out are listed afterwards.</div>`
+      : `<div class="help-note"><strong>About the Updater:</strong> BoingBags 1 and 2 for AmigaOS 3.9 keep their fixes in an archive only their own Updater can open. It is run in the emulator, which opens a window of its own for a few minutes for each pack and closes it again. Nothing needs doing in that window.</div>`) : ""}`;
 }
 
 //: A pane can receive an install only when it is a volume on a hard drive.

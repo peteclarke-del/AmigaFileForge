@@ -116,12 +116,13 @@ class IsoDiskMixin:
         """Whether this disc is an AmigaOS release, and what it would need.
 
         Identified by the volume name Commodore wrote, then confirmed by
-        looking for that release's own payload drawer. A contribution CD or a
+        looking for that release's own payload drawer. A disc whose name has been
+        changed is recognised by its system trees. A contribution CD or a
         coverdisk carrying a similar name is not accepted on the name alone,
         because launching an emulator against the wrong disc wastes an
         operator's afternoon rather than failing quickly.
         """
-        from .amigaos_cd import release_for_volume
+        from .amigaos_cd import release_by_layout, release_for_volume
 
         from .emergency_boot import has_emergency_system
 
@@ -129,7 +130,7 @@ class IsoDiskMixin:
             return {"recognised": False, "reason": "This is not a CD image."}
         with self.iso_image(session) as image:
             volume = image.volume
-            release = release_for_volume(volume)
+            release = release_for_volume(volume) or release_by_layout(image)
             emergency = has_emergency_system(image)
             payload_present = False
             if release is not None:
@@ -143,7 +144,8 @@ class IsoDiskMixin:
                 "volume": volume,
                 "reason": (
                     f"{volume or session.name} is not an AmigaOS release CD. "
-                    "The 3.5 and 3.9 discs name themselves AmigaOS3.5 and AmigaOS3.9."
+                    "The 3.5 and 3.9 discs name themselves AmigaOS3.5 and AmigaOS3.9, "
+                    "and this disc carries the system trees of neither."
                 ),
             }
         if not payload_present:
