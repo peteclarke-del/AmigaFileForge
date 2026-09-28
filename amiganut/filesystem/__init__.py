@@ -43,6 +43,7 @@ from .pfs3 import PFS3Volume
 from .pfs3_blocks import PFS3_DOS_TYPES, ROOT_IDS as PFS3_ROOT_IDS
 from .sfs import SFS_ID, SFSVolume
 from .rdb import (
+    FileSystemHandler,
     Partition,
     RigidDisk,
     find_rdb_block,
@@ -773,6 +774,7 @@ __all__ = [
     "Entry",
     "FFSFilesystem",
     "FILESYSTEMS",
+    "FileSystemHandler",
     "Filetyped",
     "Geometry",
     "HD_BLOCKS",

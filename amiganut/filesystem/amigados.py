@@ -173,6 +173,11 @@ def validate_name(name: str, limit: int = MAX_NAME) -> str:
     return text
 
 
+#: The largest volume searched block by block for a root block that is not
+#: where it belongs.
+EXHAUSTIVE_ROOT_SEARCH_BLOCKS = 256 * 1024 * 1024 // 512
+
+
 class AmigaDOSVolume:
     """A mounted OFS or FFS volume, in any of the variants ``DOS\\0`` to ``DOS\\7``."""
 
@@ -224,10 +229,14 @@ class AmigaDOSVolume:
             if 0 <= block < self.total_blocks and self._is_root(block):
                 return block
         # A truncated or over-long image still mounts if a root block exists
-        # anywhere sensible, which is common for hand-trimmed dumps.
-        for block in range(self.reserved, self.total_blocks):
-            if self._is_root(block):
-                return block
+        # anywhere sensible, which is common for hand-trimmed dumps. That is a
+        # property of floppies and small hardfiles; reading every block of a
+        # partition of many gigabytes to find out that it is unformatted
+        # would take minutes to say what the three probes above already have.
+        if self.total_blocks <= EXHAUSTIVE_ROOT_SEARCH_BLOCKS:
+            for block in range(self.reserved, self.total_blocks):
+                if self._is_root(block):
+                    return block
         raise DataError(
             "The volume has an AmigaDOS boot block but no readable root block. "
             "It is unformatted, truncated or damaged."
@@ -1390,6 +1399,33 @@ STANDARD_BOOT_CODE = bytes.fromhex(
 )
 
 
+#: A volume up to this many blocks is cleared from end to end when it is
+#: formatted, as a floppy always has been. A larger one has only the blocks
+#: that describe it written, which is what keeps a new drive of many
+#: gigabytes a sparse file and formatting it a matter of seconds.
+WIPE_LIMIT_BLOCKS = 64 * 1024 * 1024 // 512
+
+#: How much of the start of a large volume is cleared, so that nothing left
+#: from an earlier filing system is found there by a program that looks.
+WIPE_HEAD_BYTES = 64 * 1024
+
+#: The root block holds this many bitmap block numbers. The rest go in
+#: bitmap extension blocks chained from it.
+ROOT_BITMAP_PAGES = 25
+
+
+def _packed_bitmap_page(bits: bytes, block_size: int) -> bytes:
+    """Pack one byte per block, 1 when free, into a checksummed bitmap block."""
+    longs = block_size // 4 - 1
+    text = bits.ljust(longs * 32, b"\0").translate(_TO_BINARY).decode("ascii")
+    page = bytearray(block_size)
+    for index in range(longs):
+        piece = text[index * 32 : index * 32 + 32]
+        put_long(page, 4 + index * 4, int(piece[::-1], 2))
+    apply_checksum(page, 0)
+    return bytes(page)
+
+
 def format_volume(
     reader: BlockReader,
     *,
@@ -1397,8 +1433,13 @@ def format_volume(
     dos_type: bytes = b"DOS\x00",
     bootable: bool = False,
     geometry: Geometry | None = None,
+    wipe: bool | None = None,
 ) -> AmigaDOSVolume:
-    """Write a brand-new empty volume across the whole of ``reader``."""
+    """Write a brand-new empty volume across the whole of ``reader``.
+
+    ``wipe`` clears every block first. Left unset, a volume the size of a
+    floppy or a small drive is cleared and a larger one is not.
+    """
     if dos_type not in DOS_TYPES:
         raise ConfigurationError(f"DOS type {dos_type!r} is not supported.")
     if DOS_TYPES[dos_type] not in WRITABLE_FORMATS:
@@ -1411,8 +1452,14 @@ def format_volume(
     if total <= reserved + 4:
         raise ConfigurationError("The requested volume is too small to format.")
     blank = b"\0" * block_size
-    for block in range(total):
-        reader.write_block(block, blank)
+    if wipe is None:
+        wipe = total <= WIPE_LIMIT_BLOCKS
+    if wipe:
+        run = blank * 2048
+        for offset in range(0, total * block_size, len(run)):
+            reader.write_range(offset, run[: total * block_size - offset])
+    else:
+        reader.write_range(0, b"\0" * min(WIPE_HEAD_BYTES, total * block_size))
 
     hash_table_size = block_size // 4 - 56
     # Half way through the whole volume: 880 on a double-density floppy, 1760
@@ -1423,22 +1470,29 @@ def format_volume(
     longs_per_page = block_size // 4 - 1
     bits_per_page = longs_per_page * 32
     page_count = (covered + bits_per_page - 1) // bits_per_page
-    if page_count > 25:
-        raise ConfigurationError(
-            "This build creates volumes with up to 25 bitmap blocks; "
-            "choose a smaller partition."
-        )
+    # The root block names the first 25 bitmap blocks. A volume past about
+    # 50 MB needs more, and those are named by bitmap extension blocks, each
+    # holding 127 block numbers and the number of the next extension.
+    extension_count = -(-max(0, page_count - ROOT_BITMAP_PAGES) // longs_per_page)
     bitmap_blocks = [root_block + 1 + index for index in range(page_count)]
+    extension_blocks = [
+        root_block + 1 + page_count + index for index in range(extension_count)
+    ]
     # A directory-cache volume starts with one empty cache block for the root,
     # placed straight after the bitmap.
-    cache_block = root_block + 1 + page_count if is_dircache(dos_type) else 0
+    after_bitmap = root_block + 1 + page_count + extension_count
+    cache_block = after_bitmap if is_dircache(dos_type) else 0
+    if after_bitmap + 1 >= total:
+        raise ConfigurationError("The requested volume is too small to format.")
 
     root = bytearray(block_size)
     put_long(root, OFF_TYPE, T_HEADER)
     put_long(root, OFF_HT_SIZE, hash_table_size)
     put_long(root, _tail(block_size, 200), 0xFFFFFFFF)
-    for index, block in enumerate(bitmap_blocks):
+    for index, block in enumerate(bitmap_blocks[:ROOT_BITMAP_PAGES]):
         put_long(root, _tail(block_size, 196) + index * 4, block)
+    if extension_blocks:
+        put_long(root, _tail(block_size, 96), extension_blocks[0])
     now = datetime.now(timezone.utc)
     days, mins, ticks = datetime_to_datestamp(now)
     for offset in (_tail(block_size, 92), _tail(block_size, 40), _tail(block_size, 28)):
@@ -1446,7 +1500,7 @@ def format_volume(
         put_long(root, offset + 4, mins)
         put_long(root, offset + 8, ticks)
     write_bstr(root, _tail(block_size, 80), validate_name(label), MAX_NAME)
-    used = {root_block, *bitmap_blocks}
+    used = {root_block, *bitmap_blocks, *extension_blocks}
     if cache_block:
         used.add(cache_block)
         put_long(root, _tail(block_size, 8), cache_block)
@@ -1463,19 +1517,35 @@ def format_volume(
     put_signed_long(root, _tail(block_size, 4), ST_ROOT)
     reader.write_block(root_block, bytes(apply_checksum(root)))
 
-    for page_index, page_block in enumerate(bitmap_blocks):
+    remaining = bitmap_blocks[ROOT_BITMAP_PAGES:]
+    for index, extension in enumerate(extension_blocks):
         page = bytearray(block_size)
-        for long_index in range(longs_per_page):
-            value = 0
-            for bit in range(32):
-                position = page_index * bits_per_page + long_index * 32 + bit
-                if position >= covered:
-                    break
-                if (position + reserved) not in used:
-                    value |= 1 << bit
-            put_long(page, 4 + long_index * 4, value)
-        apply_checksum(page, 0)
-        reader.write_block(page_block, bytes(page))
+        names = remaining[index * longs_per_page : (index + 1) * longs_per_page]
+        for position, block in enumerate(names):
+            put_long(page, position * 4, block)
+        if index + 1 < len(extension_blocks):
+            put_long(page, block_size - 4, extension_blocks[index + 1])
+        reader.write_block(extension, bytes(page))
+
+    # Nearly every bitmap block of a new volume says the same thing, that all
+    # the blocks it covers are free, so that one is packed once. Only the
+    # blocks covering something in use, and the last, are worked out.
+    all_free = _packed_bitmap_page(b"\x01" * bits_per_page, block_size)
+    occupied: dict[int, list[int]] = {}
+    for block in used:
+        position = block - reserved
+        occupied.setdefault(position // bits_per_page, []).append(position % bits_per_page)
+    for page_index, page_block in enumerate(bitmap_blocks):
+        first = page_index * bits_per_page
+        length = min(bits_per_page, covered - first)
+        taken = occupied.get(page_index)
+        if taken is None and length == bits_per_page:
+            reader.write_block(page_block, all_free)
+            continue
+        bits = bytearray(b"\x01" * length)
+        for position in taken or ():
+            bits[position] = 0
+        reader.write_block(page_block, _packed_bitmap_page(bytes(bits), block_size))
 
     boot_first = bytearray(block_size)
     boot_first[0:4] = dos_type

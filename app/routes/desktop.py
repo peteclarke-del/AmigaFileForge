@@ -30,7 +30,8 @@ from ..app_update import Activity
 from ..attached_drives import UDEV_RULE_NAME, find_attached_drive, list_attached_drives
 from ..disk_service import DiskError, DiskService
 from ..drive_clone import clone_drive, clone_scopes, target_problem
-from ..drive_export import export_drive, export_scopes
+from ..drive_export import check_destination, export_drive, export_scopes
+from ..drive_write import write_image, write_plan
 from ..desktop_state import DesktopClientState
 from ..image_opening import open_image_path, open_rom_component_paths
 from ..operations import OperationRegistry
@@ -383,6 +384,154 @@ def create_desktop_blueprint(
                     progress,
                 )
         return jsonify(result=result)
+
+    def _working_image(image_id: str):
+        session = service.get(image_id)
+        if session.attached_device:
+            raise DiskError(
+                "This is a drive opened in place. Use Copy drive to another "
+                "drive to duplicate it."
+            )
+        if session.kind not in {"hdf", "ffs", "ofs"}:
+            raise DiskError("Only a hard-drive image is written to a drive.")
+        return session
+
+    @blueprint.get("/api/desktop/images/<image_id>/drive-write")
+    def drive_write_options(image_id):
+        """Offer the drives an image could be written to, and why not if not."""
+        session = _working_image(image_id)
+        every_byte = write_plan(session.path, True)
+        held = write_plan(session.path, False)
+        open_devices = _open_devices()
+        targets = []
+        for drive in list_attached_drives():
+            row = drive.to_dict()
+            row["problem"] = target_problem(
+                drive, session.path, held["imageBytes"], open_devices
+            )
+            row["unusedBytes"] = max(0, drive.size - held["imageBytes"])
+            targets.append(row)
+        return jsonify(
+            imageBytes=held["imageBytes"],
+            heldBytes=held["writtenBytes"],
+            everyByteBytes=every_byte["writtenBytes"],
+            partitioned=session.kind == "hdf",
+            targets=targets,
+        )
+
+    @blueprint.post("/api/desktop/images/<image_id>/drive-write")
+    @request_effect("external", "writing a drive image over an attached drive")
+    @media_activity.guard
+    def write_image_to_drive(image_id):
+        """Write a working image onto an attached drive, erasing it, and verify it.
+
+        The request has to name the target twice, once to choose it and once
+        to confirm it, so a stray or replayed request cannot erase a drive.
+        """
+        session = _working_image(image_id)
+        data = payload()
+        wanted = str(data.get("target") or "")
+        if not wanted or str(data.get("confirm") or "") != wanted:
+            raise DiskError("Confirm which drive is to be erased before writing to it.")
+        try:
+            target = find_attached_drive(wanted)
+        except LookupError as exc:
+            raise DiskError(str(exc)) from exc
+        operation_id = str(data.get("operationId") or "") or None
+        with operations.tracked(
+            operation_id,
+            f"Writing {session.name} to {target.model}",
+            f"{target.model} now holds a verified copy of the image",
+        ) as progress:
+            with session.lock:
+                source = service.prepare_download(session)
+                result = write_image(
+                    source,
+                    target,
+                    _open_devices(),
+                    progress,
+                    every_byte=bool(data.get("everyByte")),
+                )
+        service._reread_partition_table(target.stable_path)
+        return jsonify(result=result, image=service.summary(session))
+
+    @blueprint.get("/api/desktop/images/<image_id>/save-image")
+    def save_drive_image_options(image_id):
+        """Suggest where a drive image might be saved."""
+        session = _working_image(image_id)
+        name = DiskService.safe_filename(session.name) or "drive.hdf"
+        return jsonify(
+            folder=str(Path.home()),
+            name=name,
+            stem=Path(name).stem or "drive",
+            bytes=session.path.stat().st_size,
+            scopes=service.save_scopes(session),
+        )
+
+    @blueprint.post("/api/desktop/images/<image_id>/save-image")
+    @request_effect("lifecycle", "saving a drive image to a file on this machine")
+    def save_drive_image(image_id):
+        """Save a working image to a host file without writing its empty space."""
+        session = _working_image(image_id)
+        data = payload()
+        target = check_destination(data.get("destination"), session.path)
+        operation_id = str(data.get("operationId") or "") or None
+        with operations.tracked(
+            operation_id,
+            f"Saving {session.name}",
+            "The drive image has been saved",
+        ) as progress:
+            result = service.save_drive_image(
+                session, target, progress, str(data.get("scope") or "image")
+            )
+        return jsonify(result=result, image=service.summary(session))
+
+    @blueprint.post("/api/desktop/attached-drives/initialise")
+    @request_effect("external", "giving an attached drive a new partition table")
+    @media_activity.guard
+    def initialise_attached_drive():
+        """Partition and format an attached drive in place, then open it.
+
+        The drive is named twice, as for every request that erases one. It
+        must not be mounted by the host or open in a pane, because either
+        would be left describing a drive that no longer exists.
+        """
+        data = payload()
+        wanted = str(data.get("id") or "")
+        if not wanted or str(data.get("confirm") or "") != wanted:
+            raise DiskError("Confirm which drive is to be erased before initialising it.")
+        try:
+            drive = find_attached_drive(wanted)
+        except LookupError as exc:
+            raise DiskError(str(exc)) from exc
+        if not drive.readable:
+            raise DiskError(drive.detail)
+        if drive.mounted:
+            raise DiskError(
+                f"Linux has this drive mounted at {', '.join(drive.mounted)}. "
+                "Unmount it first, because two systems writing to one drive corrupt it."
+            )
+        if drive.read_only_switch:
+            raise DiskError("The drive's write-protect switch is on.")
+        if os.path.realpath(drive.stable_path) in _open_devices():
+            raise DiskError("This drive is open in a pane. Close that pane first.")
+        volume = data.get("volume") if isinstance(data.get("volume"), dict) else None
+        operation_id = str(data.get("operationId") or "") or None
+        with operations.tracked(
+            operation_id,
+            f"Initialising {drive.model}",
+            f"{drive.model} is ready",
+        ) as progress:
+            result = service.initialise_attached_drive(
+                drive.stable_path,
+                data.get("partitions"),
+                volume=volume,
+                progress=progress,
+            )
+        session = service.open_attached_drive(drive.stable_path, drive.model)
+        if data.get("allowWrites"):
+            service.allow_drive_writes(session, True)
+        return jsonify(result=result, image=service.summary(session))
 
     @blueprint.get("/api/desktop/images/<image_id>/physical-floppy")
     @request_effect("external", "probing Greaseweazle physical-floppy access")

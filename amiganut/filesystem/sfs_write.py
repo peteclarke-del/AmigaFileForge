@@ -229,8 +229,15 @@ class SFSWriter:
         covered = min(per_page, self.total_blocks - page * per_page)
         return text[:covered]
 
-    def _free_runs(self, start: int):
-        """Yield runs of usable blocks as (first, length), from ``start`` round to it."""
+    def _free_runs(self, start: int, enough: int = 0):
+        """Yield runs of usable blocks as (first, length), from ``start`` round to it.
+
+        A run is normally given once its end is found. On a new volume of many
+        gigabytes the first run is the whole of the free space, and finding
+        its end means reading every bitmap block of the volume to place one
+        file. With ``enough``, a run is given as soon as it is that long, and
+        what follows it is given as another.
+        """
         per_page = self._bits_per_page
         start %= self.total_blocks
         for segment_start, segment_end in ((start, self.total_blocks), (0, start)):
@@ -259,6 +266,9 @@ class SFSWriter:
                         following = text.find("1", position, limit)
                         position = limit if following < 0 else following
                 block = base + limit
+                if enough and run_start is not None and block - run_start >= enough:
+                    yield run_start, block - run_start
+                    run_start = None
             if run_start is not None:
                 yield run_start, segment_end - run_start
 
@@ -271,7 +281,7 @@ class SFSWriter:
         """
         runs: list[tuple[int, int]] = []
         found = 0
-        for first, length in self._free_runs(start):
+        for first, length in self._free_runs(start, wanted):
             if contiguous:
                 if length >= wanted:
                     return [(first, wanted)]
@@ -1258,14 +1268,21 @@ def format_sfs_volume(
             bin_container[CONTAINER_HEADER : CONTAINER_HEADER + len(bin_object)] = bin_object
             write(recycled_block, bin_container)
 
+        # A bit is set for a free block, the first block of a page in the
+        # highest bit. The free blocks are one run, from the end of the
+        # bitmap to the reserved blocks at the end of the partition, so each
+        # page is a run of ones cut from that, worked out as one number
+        # rather than a bit at a time: a partition of a hundred gigabytes has
+        # two hundred million of them.
         used_start = ADMIN_REGION + bitmap_blocks + start
+        free_end = total - end
         for page in range(bitmap_blocks):
             first = page * per_page
+            low = max(used_start, first) - first
+            high = min(free_end, first + per_page) - first
             value = 0
-            for bit in range(per_page):
-                block = first + bit
-                if used_start <= block < total - end:
-                    value |= 1 << (per_page - 1 - bit)
+            if high > low:
+                value = ((1 << (high - low)) - 1) << (per_page - high)
             bitmap = fresh(BITMAP_ID)
             bitmap[HEADER_SIZE:] = value.to_bytes(per_page // 8, "big")
             write(bitmap_base + page, bitmap)
