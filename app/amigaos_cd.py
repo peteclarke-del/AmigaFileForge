@@ -4,9 +4,11 @@ AmigaOS 3.5 and 3.9 were published on CD rather than on floppies, and they are
 not installed the way 3.1 is. There is no tree to copy: the disc carries a
 Commodore Installer script of two hundred kilobytes that runs on the Amiga,
 reads the versions of the libraries the live system has loaded, asks a great
-many questions and patches an existing installation in place. Its own words
-are that "Pretend mode cannot be used with this installation script", and 3.9
-refuses outright unless it finds an earlier release already there.
+many questions and writes the system where it is told to. Its own words are
+that "Pretend mode cannot be used with this installation script". The 3.9
+script offers three things: an update over 3.5, and a "full installation over
+OS3.0 or empty HD", for which it says to start the machine from the emergency
+system the disc carries.
 
 So this component does not install anything. It does the three things that can
 be done honestly from outside the Amiga, and which otherwise cost an operator a
@@ -22,10 +24,10 @@ minutes to be told so. An A1200 qualifies on its own, and so does any machine
 with an accelerator or a PiStorm, which is exactly what the hardware profiles
 already describe.
 
-**Check the target.** 3.5 wants Kickstart 3.1 and a Workbench already
-installed; 3.9 wants a release already there to update. A drive that has
-neither is not ready, and saying so before the emulator starts is the whole
-value of a preflight.
+**Check the target.** A drive with a system on it starts the machine itself.
+An empty one cannot, so the machine is started from the disc's emergency
+system instead, and only a disc that carries none leaves an empty drive with
+nothing to be done but install Workbench 3.1 first.
 
 What happens after that is the emulator booting the drive with the CD attached,
 and Commodore's installer doing the work. That is the honest division: this
@@ -87,8 +89,8 @@ RELEASES: tuple[Release, ...] = (
         volume="AmigaOS3.9",
         payload="OS-Version3.9",
         requires=(
-            "Kickstart 3.1 ROMs and an existing AmigaOS installation to update. "
-            "The installer refuses a drive with no earlier release on it."
+            "Kickstart 3.1 ROMs. The installer updates AmigaOS 3.5, or makes a full "
+            "installation over Workbench 3.0 or 3.1 or onto an empty drive."
         ),
         disk_space_mb=20,
     ),

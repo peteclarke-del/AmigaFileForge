@@ -2,16 +2,16 @@
 
 Nothing here installs anything, because nothing can: AmigaOS 3.5 and 3.9 are
 installed by a Commodore Installer script that runs on the Amiga, reads the
-versions the live system has loaded and patches an existing installation in
-place. What this covers is the part that can be settled before an emulator is
+versions the live system has loaded and writes the system where it is told
+to. What this covers is the part that can be settled before an emulator is
 started, which is the part that otherwise costs an operator a long detour to
 find out.
 
 The failures worth guarding against are all of the same shape: something that
 was knowable from the outset being discovered late. A disc that is not a
-release, a machine that cannot run the release it is given, and a drive with
-nothing on it to update are each knowable in a second and each waste minutes
-when they are not checked.
+release, a machine that cannot run the release it is given, and a drive that
+nothing can start the machine from are each knowable in a second and each
+waste minutes when they are not checked.
 """
 
 from __future__ import annotations
@@ -96,11 +96,15 @@ class PreflightTests(unittest.TestCase):
         self.addCleanup(self._temporary.cleanup)
         self.service = DiskService(self.root / "work")
 
-    def _disc(self, volume: str, payload: str | None) -> object:
+    def _disc(self, volume: str, payload: str | None, *, emergency: bool = False) -> object:
         tree = directory("")
         tree.add(file("Disk.info", b"icon"))
         if payload:
             tree.add(directory(payload)).add(file("Install", b"script"))
+        if emergency:
+            system = tree.add(directory("Emergency-Boot"))
+            system.add(directory("S")).add(file("Startup-Sequence", b"C:LoadWB\n"))
+            system.add(directory("C")).add(file("LoadWB", b"program"))
         path = self.root / f"{volume}.iso"
         path.write_bytes(build_iso(tree, volume=volume))
         return open_image_path(self.service, path)
@@ -126,15 +130,49 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(checked["blocking"], [])
         self.assertEqual(checked["disc"]["label"], "AmigaOS 3.9")
 
-    def test_a_drive_with_nothing_to_update_is_refused(self) -> None:
-        """3.9 refuses a drive with no earlier release, so this says so first."""
+    def test_an_empty_drive_is_started_from_the_system_on_the_disc(self) -> None:
+        """The installer's own words are "full installation over OS3.0 or empty HD"."""
+        drive = self._drive("a1200", ["kick31"], workbench=False)
+        disc = self._disc("AmigaOS3.9", "OS-Version3.9", emergency=True)
+
+        checked = self.service.amigaos_cd_preflight(drive, disc)
+
+        self.assertTrue(checked["ready"], checked["blocking"])
+        self.assertEqual(checked["bootFrom"], "disc")
+        self.assertFalse(checked["needsWorkbench"])
+        self.assertTrue(checked["disc"]["emergencySystem"])
+        self.assertTrue(any("emergency system" in item for item in checked["notes"]))
+        self.assertTrue(any("DH0" in item for item in checked["notes"]))
+
+    def test_a_drive_with_a_system_on_it_starts_itself(self) -> None:
+        drive = self._drive("a1200", ["kick31"], workbench=True)
+        disc = self._disc("AmigaOS3.9", "OS-Version3.9", emergency=True)
+
+        checked = self.service.amigaos_cd_preflight(drive, disc)
+
+        self.assertTrue(checked["ready"])
+        self.assertEqual(checked["bootFrom"], "drive")
+        self.assertEqual(checked["notes"], [])
+
+    def test_an_empty_drive_and_a_disc_with_no_system_need_workbench_first(self) -> None:
+        """Said as the drive's problem, with the way forward, not as the disc's."""
         drive = self._drive("a1200", ["kick31"], workbench=False)
         disc = self._disc("AmigaOS3.9", "OS-Version3.9")
 
         checked = self.service.amigaos_cd_preflight(drive, disc)
 
         self.assertFalse(checked["ready"])
-        self.assertTrue(any("Startup-Sequence" in item for item in checked["blocking"]))
+        self.assertTrue(checked["disc"]["recognised"], "the disc itself is fine")
+        self.assertTrue(checked["needsWorkbench"])
+        self.assertEqual(checked["bootFrom"], "")
+        self.assertEqual(len(checked["blocking"]), 1)
+        self.assertIn("DH0 has no AmigaOS on it", checked["blocking"][0])
+        self.assertIn("Install Workbench 3.1", checked["blocking"][0])
+
+    def test_what_the_release_needs_is_what_its_installer_says(self) -> None:
+        described = {item["key"]: item["requires"] for item in describe_releases()}
+        self.assertIn("empty drive", described["3.9"])
+        self.assertNotIn("refuses", described["3.9"])
 
     def test_a_68000_machine_is_refused_before_anything_starts(self) -> None:
         drive = self._drive("a500", ["kick31"], workbench=True)
@@ -273,7 +311,12 @@ class CdDriverTests(unittest.TestCase):
         self.assertFalse(result["changed"])
         self.assertIn("Storage disk", result["detail"])
 
-    def test_the_preflight_says_the_driver_will_be_switched_on(self) -> None:
+    def test_the_preflight_leaves_the_driver_alone_and_says_why_it_matters(self) -> None:
+        """The emulator shows the disc as CD0: itself, so nothing is written.
+
+        A mountlist naming the emulator's CD device would be wrong on the real
+        machine the drive is for, and the emulator does not need one.
+        """
         self._put("L/CDFileSystem", b"filesystem")
         self._put("Storage/DOSDrivers/CD0", self.STOCK)
         self._put("S/Startup-Sequence", b"C:SetPatch\n")
@@ -288,7 +331,8 @@ class CdDriverTests(unittest.TestCase):
 
         self.assertTrue(checked["ready"])
         self.assertFalse(checked["cdDriver"]["active"])
-        self.assertTrue(any("activated as CD0:" in item for item in checked["warnings"]))
+        self.assertTrue(any("a real machine will need one" in item for item in checked["warnings"]))
+        self.assertFalse(self.service.cd_driver_state(self.drive)["active"])
 
 
 class EmulatorAttachmentTests(unittest.TestCase):

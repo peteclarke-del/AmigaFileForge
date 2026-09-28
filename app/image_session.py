@@ -64,6 +64,9 @@ class ImageSession:
     #: Advanced after each change to an attached drive, whose device node
     #: does not reliably record a modification time.
     device_revision: int = 0
+    #: True while this image is attached to a running emulator, which is
+    #: writing to it. Nothing here changes it until the emulator has closed.
+    in_emulator: bool = False
     owner_id: str | None = field(default_factory=lambda: SESSION_OWNER.get())
     lock: threading.RLock = field(default_factory=threading.RLock)
 

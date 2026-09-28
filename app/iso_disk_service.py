@@ -123,11 +123,14 @@ class IsoDiskMixin:
         """
         from .amigaos_cd import release_for_volume
 
+        from .emergency_boot import has_emergency_system
+
         if session.kind != "iso":
             return {"recognised": False, "reason": "This is not a CD image."}
         with self.iso_image(session) as image:
             volume = image.volume
             release = release_for_volume(volume)
+            emergency = has_emergency_system(image)
             payload_present = False
             if release is not None:
                 payload_present = any(
@@ -160,6 +163,7 @@ class IsoDiskMixin:
             "payload": release.payload,
             "requires": release.requires,
             "diskSpaceMb": release.disk_space_mb,
+            "emergencySystem": emergency,
         }
 
     def iso_summary(self, session: ImageSession) -> dict:
