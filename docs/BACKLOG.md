@@ -259,6 +259,27 @@ project documentation. An unchecked item remains in scope.
 - [ ] Produce signed distribution packages after the release-signing policy is
       finalised.
 
+## 14. Large drives
+
+- [x] Create partitioned drives of any size up to 2 TB as sparse images, with
+      a partition editor, starting layouts and a server-checked plan.
+- [x] Format FFS volumes past the 25 bitmap blocks the root block names, with
+      bitmap extension blocks, and PFS3 and SFS volumes of a hundred gigabytes
+      without writing more than the blocks that describe them.
+- [x] Carry filing-system handlers in the Rigid Disk Block: PFS3 shipped, and
+      any other supplied by the user or taken from a drive that has one.
+- [x] Add, remove, reformat and rename partitions, and claim the rest of a
+      drive larger than its partition table.
+- [x] Prepare an attached card in place, write a drive image to a card writing
+      only what the image holds, and save a drive image without its empty
+      space.
+- [x] Boot a 128 GB drive built here on an emulated A1200 with Kickstart 3.1,
+      Workbench installed onto a PFS3 partition and the handler loaded from
+      the drive, and read back what the machine then wrote.
+- [ ] Move and resize partitions.
+- [ ] Check a drive with SFS partitions on the real SmartFilesystem handler
+      once one has been supplied.
+
 ## Delivery order
 
 Work should normally proceed in this order:

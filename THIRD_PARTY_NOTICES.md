@@ -52,6 +52,24 @@ base distribution and retain the copyright files installed under
 `/usr/share/doc`. Distributing a container image may trigger notice or source
 obligations beyond those of the Amiga File Forge source repository.
 
+## Filing-system handlers
+
+| Component | Version in this repository | Licence | Project |
+| --- | --- | --- | --- |
+| Professional File System III, all-in-one build | 19.2 | BSD-4-Clause | <https://github.com/tonioni/pfs3aio> |
+
+`app/handlers/pfs3aio` is the PFS3 handler, an Amiga program. It is not run by
+Amiga File Forge. It is copied into the Rigid Disk Block of a drive that has
+PFS3 partitions, so that the machine the drive is put in can mount them. Its
+licence is reproduced in `app/handlers/pfs3aio.LICENSE`, and it travels with
+the handler in every package.
+
+This product includes software developed by Michiel Pelt.
+
+No other handler is shipped. A Smart File System handler, or the
+FastFileSystem of AmigaOS 3.1.4 and later, is supplied by the person using the
+application and is kept in their own configuration directory.
+
 ## Firmware and ROM material
 
 Files under `firmware/` are not covered by the Amiga File Forge MIT licence.

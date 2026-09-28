@@ -58,6 +58,8 @@ from .amiganut_internals import (
 )
 from .rom_disk_service import RomDiskMixin
 from .rdb_service import RdbPartitionMixin
+from .drive_layout_service import DriveLayoutMixin
+from . import drive_layout
 from .session_disk_service import SessionDiskMixin
 from .dms_disk_service import DMSDiskMixin
 from .session_state import normalise_warnings
@@ -98,6 +100,9 @@ from . import progress as progress_module
 
 
 COPY_BUFFER_SIZE = 8 * 1024 * 1024
+
+#: The largest volume converted for download through the browser.
+EXPORT_DOWNLOAD_LIMIT = 4 * 1024 * 1024 * 1024
 FICLONE = 0x40049409
 
 
@@ -113,6 +118,7 @@ class DiskService(
     IsoDiskMixin,
     WorkbenchInstallMixin,
     RdbPartitionMixin,
+    DriveLayoutMixin,
     RomDiskMixin,
     DMSDiskMixin,
 ):
@@ -1326,6 +1332,15 @@ class DiskService(
         measured = session.path.stat().st_size if size is None else int(size)
         return measured > 2 * 1024 * 1024
 
+    def _largest_partition(self, session: ImageSession) -> int:
+        try:
+            return max(
+                (int(row.get("sizeBytes") or 0) for row in self.list_partitions(session)),
+                default=0,
+            )
+        except DiskError:
+            return 0
+
     def export_formats(self, session: ImageSession) -> list[dict]:
         """List container formats this image's decoded sectors can be exported as.
 
@@ -1347,13 +1362,17 @@ class DiskService(
         # A hard drive can be written either way round. Which conversion is
         # offered depends on which form it is in now, because converting a
         # drive to the shape it already has is not a conversion.
+        # These conversions are handed to the browser as one download, which
+        # is no way to move a drive of many gigabytes. A larger one is saved
+        # straight to a file by the desktop application instead.
         if session.kind == "hdf":
-            formats.append({
-                "format": "hardfile",
-                "extension": "zip",
-                "label": "Bare hardfile and geometry sidecar (.hdf + .geo)",
-            })
-        elif self.is_bare_hard_drive(session, size):
+            if self._largest_partition(session) <= EXPORT_DOWNLOAD_LIMIT:
+                formats.append({
+                    "format": "hardfile",
+                    "extension": "zip",
+                    "label": "Bare hardfile and geometry sidecar (.hdf + .geo)",
+                })
+        elif self.is_bare_hard_drive(session, size) and size <= EXPORT_DOWNLOAD_LIMIT:
             formats.append({
                 "format": "rdb",
                 "extension": "hdf",
@@ -1427,63 +1446,41 @@ class DiskService(
         A hardfile holds one volume and nothing else, so the machine reading it
         has to be told the geometry. Giving it an RDB puts that description
         inside the file, which is what lets `HDToolBox` and an emulator mount
-        it without being configured first.
+        it without being configured first. A volume in a filing system
+        Kickstart does not carry is given its handler as well.
 
-        The volume's own bytes are copied across unchanged. What the export
-        adds is the reserved cylinder in front of them, so the result is larger
-        than the source by exactly that much.
+        The volume's own bytes are copied across unchanged, into a partition
+        of exactly the volume's size, because the FastFileSystem finds the
+        root block from the size the partition is declared with.
         """
+        from . import filesystem_handlers
+
         try:
-            from amiganut.filesystem.blocks import BlockReader
-            from amiganut.filesystem.rdb import write_rigid_disk
+            from amiganut.filesystem import drive
         except ImportError as exc:  # pragma: no cover - packaging failure
             raise DiskError("The Amiganut Rigid Disk Block API is unavailable.") from exc
 
-        source_size = session.path.stat().st_size
-        volume_blocks = source_size // HARDFILE_SECTOR_SIZE
-        if volume_blocks < 2:
-            raise DiskError("This image is too small to describe as a hard drive.")
-        heads, sectors = 16, 63
-        blocks_per_cylinder = heads * sectors
-        # One cylinder for the RDB itself, then whole cylinders for the volume.
-        partition_cylinders = max(1, -(-volume_blocks // blocks_per_cylinder))
-        total_blocks = (1 + partition_cylinders) * blocks_per_cylinder
-
         output = session.path.parent / f"{stem}-export.hdf"
-        output.unlink(missing_ok=True)
-        with output.open("wb") as target:
-            target.truncate(total_blocks * HARDFILE_SECTOR_SIZE)
-        dos_type = session.path.read_bytes()[:4] if source_size >= 4 else b"DOS\x03"
-        if not dos_type.startswith(b"DOS"):
-            dos_type = b"DOS\x03"
-        reader = BlockReader(output, writable=True)
         try:
-            disk = write_rigid_disk(
-                reader,
-                [{
-                    "name": self._rdb_device_name(session),
-                    "dosType": dos_type,
-                    "cylinders": partition_cylinders,
-                    "bootable": True,
-                    "bootPriority": 0,
-                }],
-                heads=heads,
-                sectors=sectors,
+            dos_type = drive.volume_dos_type(session.path)
+            handlers, missing = filesystem_handlers.engine_handlers([dos_type])
+            if missing and missing[0]["family"] != "ffs":
+                raise DiskError(
+                    f"No {missing[0]['label']} handler has been supplied, so the "
+                    "drive could not be mounted. Add it under Filing-system "
+                    "handlers first."
+                )
+            drive.wrap_volume(
+                session.path,
+                output,
+                name=self._rdb_device_name(session),
+                handlers=handlers,
             )
-            partition = disk.partitions[0]
-            with session.path.open("rb") as volume:
-                for index in range(volume_blocks):
-                    block = volume.read(HARDFILE_SECTOR_SIZE)
-                    if len(block) < HARDFILE_SECTOR_SIZE:
-                        block = block.ljust(HARDFILE_SECTOR_SIZE, b"\x00")
-                    reader.write_block(partition.start_block + index, block)
         except DiskError:
             raise
         except Exception as exc:
             output.unlink(missing_ok=True)
             raise DiskError(self._friendly_engine_error(str(exc))) from exc
-        finally:
-            reader.close()
         return output, output.name
 
     def _export_bare_hardfile(self, session: ImageSession, stem: str) -> tuple[Path, str]:
@@ -1495,33 +1492,25 @@ class DiskService(
         the two files are only usable together.
         """
         try:
-            from amiganut.filesystem.blocks import BlockReader
-            from amiganut.filesystem.rdb import read_rigid_disk
+            from amiganut.filesystem import drive
         except ImportError as exc:  # pragma: no cover - packaging failure
             raise DiskError("The Amiganut Rigid Disk Block API is unavailable.") from exc
         from .hardfile_geometry import format_geometry
 
         index = self.selected_partition(session)
-        reader = BlockReader(session.path, writable=False)
+        data_path = session.path.parent / f"{stem}-partition.hdf"
         try:
-            disk = read_rigid_disk(reader)
-            if not disk.partitions:
-                raise DiskError("This drive declares no partitions to export.")
-            if index >= len(disk.partitions):
-                index = 0
-            partition = disk.partitions[index]
-            device = str(partition.name or f"DH{index}")
-            data_path = session.path.parent / f"{stem}-{self.safe_filename(device)}.hdf"
-            data_path.unlink(missing_ok=True)
-            with data_path.open("wb") as target:
-                for offset in range(partition.total_blocks):
-                    target.write(reader.read_block(partition.start_block + offset))
+            partition = drive.extract_partition(session.path, index, data_path)
         except DiskError:
             raise
         except Exception as exc:
             raise DiskError(self._friendly_engine_error(str(exc))) from exc
-        finally:
-            reader.close()
+        device = str(partition.name or f"DH{index}")
+        named = session.path.parent / f"{stem}-{self.safe_filename(device)}.hdf"
+        if named != data_path:
+            named.unlink(missing_ok=True)
+            data_path.replace(named)
+            data_path = named
 
         cylinders = partition.high_cylinder - partition.low_cylinder + 1
         descriptor = format_geometry(
@@ -1725,6 +1714,16 @@ class DiskService(
         # a compressed ADF; both are accepted as spellings of a plain
         # double-density OFS floppy.
         native_format = {"ofs": "adf", "adz": "adf"}.get(native_format, native_format)
+        if native_format in {"hardfile", "ffs-hard", "ffs-physical"}:
+            drive = self._create_hard_drive(native_format, title, capacity, options or {})
+            if drive is not None:
+                return drive
+            capacity = str(
+                drive_layout.parse_size(capacity or "20MB", what="drive size")
+            )
+        bare_variant = self.BARE_FFS_VARIANTS.get(
+            str((options or {}).get("filesystem") or "").strip().lower(), "FFS-INTL"
+        )
         # Every floppy variant is the same 880 KiB or 1.76 MiB of blocks; only
         # the DOS type in the boot block differs, which is exactly how a real
         # machine distinguishes them.
@@ -1741,7 +1740,7 @@ class DiskService(
             "hardfile": (
                 "hardfile.hdf",
                 [
-                    "--variant", "FFS-INTL",
+                    "--variant", bare_variant,
                     "--geometry", f"capacity={capacity or '20MB'}",
                     "--geometry-sidecar",
                 ],
@@ -1751,13 +1750,13 @@ class DiskService(
                 [
                     "--filesystem", "rdb",
                     "--partitions", "1",
-                    "--variant", "FFS-INTL",
+                    "--variant", bare_variant,
                     "--geometry", f"capacity={capacity or '100MB'}",
                 ],
             ),
             "ffs-physical": (
                 "physical-drive.raw",
-                ["--variant", "FFS-INTL", "--geometry", f"capacity={capacity or '100MB'}"],
+                ["--variant", bare_variant, "--geometry", f"capacity={capacity or '100MB'}"],
             ),
         }
         if native_format == "kickfs":
@@ -1945,6 +1944,59 @@ class DiskService(
             self.sessions[session.id] = session
         self._persist_session(session)
         return session
+
+    #: The FastFileSystem variants a bare volume can be created in.
+    BARE_FFS_VARIANTS = {
+        "ffs-intl": "FFS-INTL",
+        "ffs": "FFS",
+        "ffs-dc": "FFS-DC",
+        "ffs-lnfs": "FFS-LNFS",
+        "ofs": "OFS",
+        "ofs-intl": "OFS-INTL",
+    }
+
+    def _create_hard_drive(
+        self,
+        native_format: str,
+        title: str,
+        capacity: str | None,
+        options: dict,
+    ) -> ImageSession | None:
+        """Create a hard drive the way the request describes it, if it says how.
+
+        A request that names partitions gets a drive with exactly those. One
+        that names the Professional or Smart File System for a bare volume
+        gets that. Anything else returns None and is made the way it always
+        has been, as one FFS volume, once its size has been checked.
+        """
+        partitions = options.get("partitions")
+        if native_format == "ffs-hard" and partitions:
+            return self.create_drive(title, capacity or "100MB", partitions)
+        chosen = str(options.get("filesystem") or "").strip().lower()
+        if chosen and chosen not in self.BARE_FFS_VARIANTS:
+            if native_format == "hardfile":
+                raise DiskError(
+                    "A UAE hardfile with a geometry sidecar holds an FFS volume. "
+                    "Choose the raw drive image for another filing system, or a "
+                    "partitioned drive, which carries the handler as well."
+                )
+            if native_format == "ffs-physical":
+                return self.create_bare_volume(title, capacity or "100MB", chosen)
+        size = drive_layout.parse_size(capacity or "20MB", what="drive size")
+        if size > drive_layout.LARGEST_FFS_PARTITION:
+            raise DiskError(
+                f"An FFS volume is kept to "
+                f"{drive_layout.human_size(drive_layout.LARGEST_FFS_PARTITION)} here, "
+                "because FFS is slow to validate and easy to damage past that. "
+                "For a larger drive choose the partitioned drive and lay its "
+                "partitions out in the Professional File System."
+            )
+        if size > HARDFILE_MAX_SIZE and native_format == "hardfile":
+            raise DiskError(
+                "The requested hardfile exceeds this build's "
+                f"{HARDFILE_MAX_SIZE // (1024 * 1024):,} MiB limit."
+            )
+        return None
 
     @staticmethod
     def _blank_target_hardware(

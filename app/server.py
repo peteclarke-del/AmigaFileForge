@@ -18,6 +18,8 @@ from .routes.catalog import create_catalog_blueprint
 from .routes.desktop import create_desktop_blueprint
 from .routes.images import create_images_blueprint
 from .routes.install import create_install_blueprint
+from .routes.drives import create_drives_blueprint
+from . import filesystem_handlers
 from .routes.tools import InteractiveEmulator, create_tools_blueprint
 from .routes.rom_tools import create_rom_tools_blueprint
 from .routes.effects import mutation_for
@@ -57,6 +59,9 @@ DRIVE_UNAVAILABLE = frozenset({
     "images.convert_image",
     "images.export_image",
     "images.compact",
+    # A real drive is the size it is, and is exported rather than saved.
+    "desktop.write_image_to_drive",
+    "desktop.save_drive_image",
     "hex_editor.read_hex",
     "hex_editor.search_hex",
     "hex_editor.write_hex",
@@ -91,6 +96,9 @@ def create_app(
     application.config["MAX_CONTENT_LENGTH"] = max_upload_gib * 1024 * 1024 * 1024
     application.config["AMIGA_PLATFORM"] = runtime.public_contract()
     service = DiskService(active_work_dir)
+    # The web host serves several people, each of whom keeps the handlers
+    # they supply to themselves.
+    filesystem_handlers.PER_OWNER = runtime.kind == "web"
     operations = OperationRegistry(active_work_dir / "operations.json")
     # Reading or writing a floppy disk counts as activity an application
     # update and a restart must wait for. Only the desktop host installs, and
@@ -216,6 +224,7 @@ def create_app(
     )
     application.register_blueprint(create_rom_tools_blueprint(service, ROOT))
     application.register_blueprint(create_install_blueprint(service, operations))
+    application.register_blueprint(create_drives_blueprint(service, operations))
     application.register_blueprint(
         create_app_update_blueprint(app_updater, desktop=runtime.kind == "desktop")
     )

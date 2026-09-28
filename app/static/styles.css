@@ -1650,3 +1650,52 @@ dialog:has(.online-library-heading), dialog:has(.online-source-list) { width: mi
 .cheat-library-list article > span { display: flex; flex-wrap: wrap; justify-content: end; gap: 5px; }
 .cheat-library-list small, .cheat-library-list code { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .guarded-cheat-grid { grid-template-columns: 1fr; } .guarded-cheat-grid > label.wide { grid-column: auto; } }
+
+/* Hard drive layout: the partition editor, the partition manager and the
+   handler list. Inputs inside the table take the same look as every other
+   field, because a table cell is not a .field and would otherwise fall back
+   to the browser's own. */
+dialog:has(.drive-layout-dialog) { width: min(900px, calc(100vw - 28px)); }
+.drive-layout-editor { display: grid; gap: 10px; margin: 12px 0 4px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--cream) 45%, var(--paper)); }
+.drive-layout-editor > .field-grid > .field { margin: 0; }
+.drive-layout-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.drive-layout-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 11px; }
+.drive-layout-table th, .drive-layout-table td { padding: 6px 7px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.drive-layout-table tbody tr:last-child td { border-bottom: 0; }
+.drive-layout-table th { color: var(--muted); font: 700 8px DM Mono, monospace; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; background: var(--cream); }
+.drive-layout-table input:not([type="checkbox"]), .drive-layout-table select { box-sizing: border-box; width: 100%; min-width: 0; height: 34px; border: 1px solid var(--input-border); border-radius: 8px; padding: 5px 8px; outline: none; background: var(--input-background); color: var(--ink); font: inherit; }
+.drive-layout-table input:not([type="checkbox"]):focus, .drive-layout-table select:focus { border-color: var(--teal); box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 18%, transparent); }
+.drive-layout-table input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--teal); }
+.drive-layout-table input[type="number"] { width: 5.5em; }
+.drive-layout-table td:nth-child(1) input { min-width: 5em; }
+.drive-layout-table td:nth-child(2) input { min-width: 8em; }
+.drive-layout-table td:nth-child(3) select { min-width: 13em; }
+.drive-layout-table td:nth-child(4) input { min-width: 7em; }
+.drive-layout-table .button { padding: 5px 9px; font-size: 10px; box-shadow: none; }
+.drive-layout-table .drive-layout-empty td, .drive-layout-table .drive-layout-free td { color: var(--muted); }
+.drive-layout-actions { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+.drive-layout-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 10px; }
+.drive-map { display: flex; gap: 2px; min-height: 44px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.drive-map:empty { display: none; }
+.drive-map-part { display: grid; flex: 1 1 0; align-content: center; gap: 1px; min-width: 0; padding: 5px 7px; overflow: hidden; color: var(--ink); background: color-mix(in srgb, var(--blue) 20%, var(--paper)); }
+.drive-map-part b, .drive-map-part small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drive-map-part b { font-size: 10px; }
+.drive-map-part small { color: var(--muted); font: 8px DM Mono, monospace; }
+.drive-map-part.family-pfs3 { background: color-mix(in srgb, var(--teal) 26%, var(--paper)); }
+.drive-map-part.family-sfs { background: color-mix(in srgb, var(--yellow) 38%, var(--paper)); }
+.drive-map-part.family-ffs { background: color-mix(in srgb, var(--blue) 22%, var(--paper)); }
+.drive-map-part.reserved { flex-grow: 0 !important; flex-basis: 46px; background: var(--cream); }
+.drive-map-part.unused { background: repeating-linear-gradient(135deg, var(--paper), var(--paper) 6px, var(--cream) 6px, var(--cream) 12px); }
+.drive-layout-editor .help-note, .drive-layout-editor .help-warning { margin: 0 0 6px; }
+.drive-layout-dialog .help-note .button, .drive-layout-dialog .help-warning .button { margin: 6px 0 0; padding: 5px 9px; font-size: 10px; box-shadow: none; }
+.handler-list { display: grid; gap: 7px; margin: 12px 0; padding: 0; list-style: none; }
+.handler-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--cream); }
+.handler-details { display: grid; gap: 3px; min-width: 0; }
+.handler-details strong { color: var(--ink); font-size: 12px; }
+.handler-details small { color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.handler-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.handler-actions .button { padding: 6px 10px; font-size: 10px; }
+@media (max-width: 700px) {
+  .handler-row { align-items: stretch; flex-direction: column; }
+  .drive-layout-actions { justify-content: flex-start; }
+}

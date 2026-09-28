@@ -32,6 +32,9 @@ class RouteEffectTests(unittest.TestCase):
     def test_every_checkpointed_route_owns_its_metadata(self) -> None:
         required = {
             "catalog.install",
+            "drives.add_partition", "drives.change_partition",
+            "drives.embed_handlers", "drives.extend_drive",
+            "drives.format_partition", "drives.remove_partition",
             "files.append_blank_rom_bank", "files.create_empty_file",
             "files.delete", "files.extract_to_directory", "files.lock",
             "files.mkdir", "files.move_ofs_items", "files.move_items",

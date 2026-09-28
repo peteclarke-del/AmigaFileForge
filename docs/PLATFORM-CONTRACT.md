@@ -86,6 +86,24 @@ Copying the drive onto another attached drive is a desktop route too. Its
 target is chosen from the attached-drive list, never from a path, and the
 request has to name it a second time as confirmation before it is erased.
 
+Platform contract version 10 records large drives. Planning a drive, creating
+one from a layout, keeping filing-system handlers and changing the partition
+table of an open drive are shared: both hosts serve the same routes, and the
+partition editor is the same page in both. Three things are desktop routes,
+under the capabilities already there. Preparing an attached card in place and
+writing a drive image to one belong to `attached-drive-access`, for the reason
+opening a drive does, and both name the drive to be erased a second time
+before anything is written. Saving a drive image straight to a path on the
+host belongs to `native-file-chooser`. The web host saves through the browser,
+which has no way to receive a file that is mostly empty space without
+receiving the empty space.
+
+In the web host, a handler someone supplies is kept for that browser owner
+alone. A handler is a program the Amiga will run, and a drive made by one
+person must not carry a program that another person chose. The desktop host
+has one owner and keeps supplied handlers in the directory its documentation
+names.
+
 ## Storage and security
 
 The web host uses the configured Docker work directory and browser-owner

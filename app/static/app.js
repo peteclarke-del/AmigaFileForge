@@ -53,6 +53,9 @@ const { confirmPageOverride } = window.AmigaSafetyDialogs.create({ esc, normalis
 let collectionCatalogue = window.AmigaCollectionCatalogue.create({ uuid: newUuid });
 const collectionRevisionsSeen = new Map();
 const showHelp = window.AmigaHelp.create({ showModal, modalContent });
+// Planning a drive changes nothing in the workspace, so its requests go
+// straight to the server rather than through api(), which clears the clipboard.
+const driveLayout = window.AmigaDriveLayout.create({ api: rawApi, upload: rawUploadApi, esc, humanSize, toast });
 // The update's requests change nothing in the workspace, so they go straight
 // to the server rather than through api(), which clears the clipboard first.
 const appUpdate = window.AmigaAppUpdate.create({
@@ -363,7 +366,7 @@ function paneLabel(index) {
 function matchingBlankImageFormat(pane) {
   const image = pane.image;
   if (!image) return { value: "adf", label: "OFS ADF" };
-  if (image.kind === "hdf") return { value: "hdf", label: "HDF" };
+  if (image.kind === "hdf") return { value: "ffs-hard", label: "Partitioned drive" };
   if (image.kind === "rom") return { value: "rom", label: "ROM" };
   if (image.kind === "kickfs") return { value: "kickfs", label: "Amiga Kickstart ROM" };
   if (image.kind === "ofs" || image.kind === "ffs") {
@@ -809,6 +812,8 @@ function renderPane(index, preserveScroll = false) {
     </tr>`;
   }).join("");
   const matchingFormat = matchingBlankImageFormat(pane);
+  // A drive with a partition table, or one volume the size of a drive.
+  const isHardDriveImage = !isArchive && (isDrive || Boolean(pane.image.hardDisk));
   const canNewFile = canEdit && !isArchive;
   const newSubmenu = `<details class="menu-submenu"><summary><b>＋</b><span>New</span><small>›</small></summary><div class="menu-submenu-panel">
     <button class="menu-command menu-new-matching-image" data-format="${matchingFormat.value}"><b>▤</b><span>New Image (${esc(matchingFormat.label)})…</span></button>
@@ -832,12 +837,14 @@ function renderPane(index, preserveScroll = false) {
     <div class="tool-menu-panel">
       ${newSubmenu}
       <button class="menu-command menu-load-image"><b>▤</b><span>Open image…</span></button>
-      ${hasHostCapability("attached-drive-access") ? '<button class="menu-command menu-open-drive"><b>⛁</b><span>Open attached drive…</span></button>' : ""}
+      ${hasHostCapability("attached-drive-access") ? '<button class="menu-command menu-open-drive"><b>⛁</b><span>Open or initialise attached drive…</span></button>' : ""}
       ${liveDrive
         ? `<button class="menu-command menu-drive-writes" data-allow="${liveDrive.writesAllowed ? "0" : "1"}"><b>${liveDrive.writesAllowed ? "⊘" : "✎"}</b><span>${liveDrive.writesAllowed ? "Make drive read-only" : "Allow writes to drive…"}</span></button>
           <button class="menu-command menu-export-drive"><b>⇄</b><span>Export drive to image file…</span></button>
           <button class="menu-command menu-clone-drive"><b>⧉</b><span>Copy drive to another drive…</span></button>`
-        : '<button class="menu-command menu-save-image"><b>⇩</b><span>Save image</span></button>'}
+        : `<button class="menu-command menu-save-image"><b>⇩</b><span>Save image</span></button>
+          ${isHardDriveImage && hasHostCapability("native-file-chooser") ? '<button class="menu-command menu-save-drive-image"><b>⇩</b><span>Save drive image to a file…</span></button>' : ""}
+          ${isHardDriveImage && hasHostCapability("attached-drive-access") ? '<button class="menu-command menu-write-drive"><b>⛁</b><span>Write image to attached drive…</span></button>' : ""}`}
       ${pane.image.exportFormats?.length ? `<button class="menu-command menu-export-image"><b>⇄</b><span>Export as…</span></button>` : ""}
       ${isDMS || pane.image.readOnly ? "" : `<span class="menu-separator" role="separator"></span>`}
       ${isPartitionIndex ? ""
@@ -902,6 +909,8 @@ function renderPane(index, preserveScroll = false) {
       ${physicalFloppyAction}
       <button class="menu-command build-deployment"><b>⇩</b><span>Build hardware deployment…</span></button>`}
       ${isPartitionIndex ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
+      ${isDrive && !isArchive ? '<button class="menu-command manage-partitions"><b>▦</b><span>Partitions…</span></button>' : ""}
+      ${isHardDriveImage ? '<button class="menu-command manage-handlers"><b>⚙</b><span>Filing-system handlers…</span></button>' : ""}
       ${isFfsHdd ? '<button class="menu-command audit-ffs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
       ${acceptsInstall ? `<span class="menu-separator" role="separator"></span>
         <button class="menu-command install-workbench"><b>⌘</b><span>Install Workbench…</span></button>
@@ -976,6 +985,10 @@ function renderPane(index, preserveScroll = false) {
   });
   host.querySelector(".menu-export-drive")?.addEventListener("click", () => guardedPaneAction(index, () => exportAttachedDrive(index).catch(error => toast(error.message, true))));
   host.querySelector(".menu-clone-drive")?.addEventListener("click", () => guardedPaneAction(index, () => cloneAttachedDrive(index).catch(error => toast(error.message, true))));
+  host.querySelector(".menu-save-drive-image")?.addEventListener("click", () => guardedPaneAction(index, () => saveDriveImage(index).catch(error => toast(error.message, true))));
+  host.querySelector(".menu-write-drive")?.addEventListener("click", () => guardedPaneAction(index, () => writeImageToDrive(index).catch(error => toast(error.message, true))));
+  host.querySelector(".manage-partitions")?.addEventListener("click", () => guardedPaneAction(index, () => showPartitionManager(index)));
+  host.querySelector(".manage-handlers")?.addEventListener("click", () => guardedPaneAction(index, () => showHandlerManager(index)));
   host.querySelector(".menu-export-image")?.addEventListener("click", () => guardedPaneAction(index, () => exportImageAs(index)));
   host.querySelector(".export-image")?.addEventListener("click", () => guardedPaneAction(index, () => (
     liveDrive ? exportAttachedDrive(index).catch(error => toast(error.message, true)) : exportImageAs(index)
@@ -4649,8 +4662,27 @@ function applySavedImageSummary(image) {
   });
 }
 
+//: Past this size an image is saved as a file of its own rather than inside
+//: a ZIP, where the host can do that: a ZIP stores every byte of the image,
+//: the empty space included.
+const LARGE_DRIVE_IMAGE = 2 * 1024 * 1024 * 1024;
+
 async function saveImage(index) {
   const pane = panes[index];
+  if (
+    !modal.open
+    && hasHostCapability("native-file-chooser")
+    && (pane.image.kind === "hdf" || pane.image.hardDisk)
+    && pane.image.size >= LARGE_DRIVE_IMAGE
+  ) {
+    try {
+      await saveDriveImage(index);
+      return true;
+    } catch (error) {
+      toast(`Could not save ${pane.image.name}: ${error.message}`, true);
+      return false;
+    }
+  }
   const existingDialog = modal.open;
   try {
     if (!existingDialog) {
@@ -4738,7 +4770,7 @@ function exportImageAs(index) {
 function attachedDriveState(drive) {
   if (!drive.readable) return drive.detail;
   if (drive.mounted.length) return `Linux has it mounted at ${drive.mounted.join(", ")}. Unmount it first.`;
-  if (!drive.amiga) return "No Amiga partition table or volume was found on it.";
+  if (!drive.amiga) return "No Amiga partition table or volume was found on it. It can be initialised for an Amiga.";
   return drive.readOnlySwitch ? "Its write-protect switch is on, so it can only be read." : "";
 }
 
@@ -4750,9 +4782,15 @@ async function chooseAttachedDrive(index) {
     blocked: attachedDriveState(drive),
     alreadyOpen: openDevices.has(drive.stablePath),
   }));
-  const firstUsable = drives.findIndex(drive => drive.readable && !drive.mounted.length && drive.amiga && !drive.alreadyOpen);
+  // A drive that can be reached can be chosen, whether or not it holds
+  // anything Amiga yet: one that does is opened, and any of them can be
+  // initialised.
+  const reachable = drive => drive.readable && !drive.mounted.length && !drive.alreadyOpen;
+  const openable = drive => reachable(drive) && drive.amiga;
+  const preferred = drives.findIndex(openable);
+  const firstUsable = preferred >= 0 ? preferred : drives.findIndex(reachable);
   const rows = drives.map((drive, position) => {
-    const usable = drive.readable && !drive.mounted.length && drive.amiga && !drive.alreadyOpen;
+    const usable = reachable(drive);
     const note = drive.alreadyOpen ? "Already open in another pane." : drive.blocked;
     return `<label class="check-field drive-choice">
       <input type="radio" name="driveId" value="${esc(drive.id)}"${usable ? "" : " disabled"}${position === firstUsable ? " checked" : ""}>
@@ -4767,7 +4805,8 @@ async function chooseAttachedDrive(index) {
     <p>A hard drive or memory card from an Amiga, attached through a USB adapter, is opened where it is rather than copied. It opens read-only. Changes can be allowed from the pane's File menu, and then go straight to the drive with no undo.</p>
     ${rows ? `<div class="drive-choices">${rows}</div>` : '<div class="help-note">No drive attached through USB was found. Attach one and open this list again.</div>'}
     ${ruleNote}
-    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="open" ${firstUsable < 0 ? "disabled" : ""}>Open drive</button></div>`,
+    <div class="help-note">A new card, or one that held something else, is prepared with <strong>Initialise…</strong>, which gives it partitions and empty volumes of any size the card allows.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button type="button" class="button ghost initialise-drive" ${firstUsable < 0 ? "disabled" : ""}>Initialise…</button><button class="button primary" value="open" ${preferred < 0 ? "disabled" : ""}>Open drive</button></div>`,
   async form => {
     const opened = await api("/api/desktop/attached-drives/open", {
       method: "POST",
@@ -4776,6 +4815,23 @@ async function chooseAttachedDrive(index) {
     });
     await acceptImage(index, opened.image);
     toast(`${opened.image.name} opened read-only`);
+  });
+  const chosenDrive = () => drives.find(drive => drive.id === modalContent.querySelector('[name="driveId"]:checked')?.value);
+  const openButton = modalContent.querySelector('button[value="open"]');
+  const initialiseButton = modalContent.querySelector(".initialise-drive");
+  const updateActions = () => {
+    const drive = chosenDrive();
+    openButton.disabled = !drive || !openable(drive);
+    initialiseButton.disabled = !drive || !reachable(drive) || drive.readOnlySwitch || !drive.writable;
+    initialiseButton.title = drive && reachable(drive) && (drive.readOnlySwitch || !drive.writable)
+      ? "This drive cannot be written to, so it cannot be initialised."
+      : "";
+  };
+  modalContent.querySelectorAll('[name="driveId"]').forEach(input => input.addEventListener("change", updateActions));
+  updateActions();
+  initialiseButton.addEventListener("click", () => {
+    const drive = chosenDrive();
+    if (drive) initialiseAttachedDrive(index, drive).catch(error => toast(error.message, true));
   });
 }
 
@@ -4948,6 +5004,548 @@ async function cloneAttachedDrive(index) {
     } finally {
       refresh.disabled = false;
     }
+  });
+}
+
+//: DOS types carry a control character as their last byte, which a page
+//: cannot show, so they are spelt the way HDToolBox spells them.
+function dosTypeText(dosType) {
+  return String(dosType || "").replace(/[\x00-\x1f]/g, character => `\\${character.charCodeAt(0)}`);
+}
+
+function driveMapMarkup(layout) {
+  const total = Math.max(1, layout.cylinders || 1);
+  const parts = [];
+  const push = (className, label, cylinders, detail) => {
+    if (cylinders <= 0) return;
+    parts.push(`<span class="drive-map-part ${className}" style="flex-grow:${Math.max(cylinders / total, 0.015)}" title="${esc(`${label} · ${detail}`)}"><b>${esc(label)}</b><small>${esc(humanSize(cylinders * layout.cylinderBytes))}</small></span>`);
+  };
+  const spans = [
+    ...layout.partitions.map(part => ({ low: part.lowCylinder, high: part.highCylinder, part })),
+    ...layout.freeRanges.map(range => ({ low: range.lowCylinder, high: range.highCylinder, free: true })),
+  ].sort((left, right) => left.low - right.low);
+  if (spans.length) push("reserved", "Table", spans[0].low, "the partition table and the handlers");
+  spans.forEach(span => {
+    const cylinders = span.high - span.low + 1;
+    if (span.free) {
+      push("unused", "Unused", cylinders, "no partition uses this");
+    } else {
+      const family = /^(PFS|PDS)/.test(span.part.dosType) ? "pfs3" : /^SFS/.test(span.part.dosType) ? "sfs" : "ffs";
+      push(`family-${family}`, span.part.name, cylinders, `${span.part.format} · ${dosTypeText(span.part.dosType)}${span.part.bootable ? " · boots" : ""}`);
+    }
+  });
+  return `<div class="drive-map" role="img" aria-label="How the drive is divided">${parts.join("")}</div>`;
+}
+
+async function applyDriveChange(index, message, request) {
+  const data = await paneOperation(index, message, request);
+  await reloadImageAfterRestore(data.image);
+  return data;
+}
+
+//: The partition table of the drive in a pane, with what can be done to it.
+//: Every change is made by the server and the table is read again afterwards,
+//: so the dialog never shows a layout the drive does not have.
+async function showPartitionManager(index) {
+  const pane = panes[index];
+  if (pane.image?.kind !== "hdf") return toast("This image has no partition table.", true);
+  let data;
+  try {
+    data = await rawApi(`/api/images/${pane.image.id}/drive-layout`);
+  } catch (error) {
+    return toast(error.message, true);
+  }
+  const { layout, options } = data;
+  const liveDrive = pane.image.attachedDrive;
+  const locked = Boolean(pane.image.readOnly);
+  const lockNote = locked
+    ? `<div class="help-note">${liveDrive ? "This drive is open read-only. Choose <strong>File → Allow writes to drive…</strong> before changing its partitions." : "This image is read-only, so its partitions cannot be changed."}</div>`
+    : "";
+  const disabled = locked || !layout.editable ? " disabled" : "";
+  const rows = layout.partitions.map((part, position) => `<tr>
+      <td><b>${esc(part.name)}</b></td>
+      <td>${esc(part.format)} · ${esc(dosTypeText(part.dosType))}</td>
+      <td>${esc(humanSize(part.sizeBytes))}</td>
+      <td>${part.bootable ? `Yes, priority ${Number(part.bootPriority)}` : "No"}</td>
+      <td class="drive-layout-actions">
+        <button type="button" class="button ghost" data-partition-properties="${position}"${disabled}>Properties…</button>
+        <button type="button" class="button ghost" data-partition-format="${position}"${disabled}>Format…</button>
+        <button type="button" class="button ghost" data-partition-remove="${position}"${disabled}>Remove…</button>
+      </td></tr>`).join("");
+  const free = layout.freeRanges.map((range, position) => `<tr class="drive-layout-free">
+      <td><b>Unused</b></td><td>Cylinders ${Number(range.lowCylinder)} to ${Number(range.highCylinder)}</td>
+      <td>${esc(humanSize(range.sizeBytes))}</td><td></td>
+      <td class="drive-layout-actions"><button type="button" class="button ghost" data-partition-add="${position}"${disabled}>Add a partition here…</button></td></tr>`).join("");
+  const handlers = layout.filesystems.length
+    ? layout.filesystems.map(handler => `${esc(handler.format)} ${esc(handler.version)} for ${esc(dosTypeText(handler.dosType))}`).join(", ")
+    : "none";
+  const missing = layout.missingHandlers.map(row => `<div class="help-warning"><strong>${esc(dosTypeText(row.dosType))} has no handler on this drive.</strong> A machine mounts that partition only if the ${esc(row.label)} is installed on it already. ${row.available
+      ? `<button type="button" class="button ghost" data-embed-handlers${disabled}>Add the handler to the drive</button>`
+      : row.family === "ffs" ? "AmigaOS 3.1.4 and later have it in ROM. For any other machine, supply it under <strong>Tools → Filing-system handlers…</strong>" : "Supply it under <strong>Tools → Filing-system handlers…</strong>, then add it here."}</div>`).join("");
+  const beyond = layout.beyondTableBytes > 0
+    ? `<div class="help-note"><strong>${esc(humanSize(layout.beyondTableBytes))} of this ${liveDrive ? "drive" : "image"} lie past what the partition table describes.</strong> That is usual when an image has been written to a larger card. Claiming it changes nothing already on the drive, and makes the room available for a new partition. <button type="button" class="button ghost" data-extend-drive${disabled}>Claim the rest of the drive</button></div>`
+    : "";
+  const grow = liveDrive || locked ? "" : `<button type="button" class="button ghost" data-grow-image>Make the image larger…</button>`;
+  showModal(`
+    <div class="drive-layout-dialog partition-manager">
+    <div class="modal-heading"><span class="modal-kicker">PARTITIONS</span><h2>${esc(pane.image.name)}</h2></div>
+    <p>${layout.partitions.length} partition${layout.partitions.length === 1 ? "" : "s"} on ${Number(layout.cylinders)} cylinders of ${esc(humanSize(layout.cylinderBytes))}, ${esc(humanSize(layout.describedBytes))} in all. Handlers carried by the drive: ${handlers}.</p>
+    ${lockNote}
+    ${layout.editable ? "" : '<div class="help-warning">This drive\'s partition table carries a bad-block list or drive initialisation code. This build leaves such a table exactly as it is, so its partitions can be browsed and changed inside but not added, removed or reformatted.</div>'}
+    ${driveMapMarkup(layout)}
+    <div class="drive-layout-table-wrap"><table class="drive-layout-table">
+      <thead><tr><th scope="col">Device</th><th scope="col">Filing system</th><th scope="col">Size</th><th scope="col">Boots</th><th scope="col">Actions</th></tr></thead>
+      <tbody>${rows}${free}</tbody></table></div>
+    ${missing}${beyond}
+    ${liveDrive ? "" : '<div class="help-note">Each change is one undo point: <strong>Edit → Undo last change</strong> puts the table and the volumes back as they were.</div>'}
+    <div class="modal-actions">${grow}<button class="button primary" value="cancel">Close</button></div>
+    </div>`, async () => true);
+
+  const reopen = () => setTimeout(() => showPartitionManager(index), 0);
+  const act = (selector, handler) => modalContent.querySelectorAll(selector).forEach(button => {
+    button.addEventListener("click", () => handler(button).catch(error => toast(error.message, true)));
+  });
+  const filesystemField = (selected, note) => `<div class="field"><label>Filing system</label><select name="filesystem" required>${driveLayout.filesystemChoices(options, selected, { placeholder: "Choose a filing system…" })}</select><small data-filesystem-help>${esc(note)}</small></div>`;
+  const wireFilesystemHelp = size => {
+    const select = modalContent.querySelector('[name="filesystem"]');
+    const help = modalContent.querySelector("[data-filesystem-help]");
+    const update = () => {
+      const chosen = options.filesystems.find(entry => entry.id === select.value);
+      if (!chosen) return;
+      help.textContent = size > chosen.largest
+        ? `${chosen.label} stops at ${humanSize(chosen.largest)} for one partition, and this one would be ${humanSize(size)}. ${chosen.family === "ffs" ? "Use the Professional File System for a partition this size." : ""}`
+        : chosen.note;
+    };
+    select.addEventListener("change", update);
+    update();
+  };
+
+  act("[data-partition-add]", async button => {
+    const space = layout.freeRanges[Number(button.dataset.partitionAdd)];
+    const taken = new Set(layout.partitions.map(part => part.name.toLowerCase()));
+    let number = 0;
+    while (taken.has(`dh${number}`)) number += 1;
+    showModal(`
+      <div class="modal-heading"><span class="modal-kicker">ADD PARTITION</span><h2>Add a partition to ${esc(pane.image.name)}</h2></div>
+      <p>${esc(humanSize(space.sizeBytes))} are unused here, from cylinder ${Number(space.lowCylinder)}.</p>
+      <div class="field-grid two">
+        <div class="field"><label>Device name</label><input name="name" value="DH${number}" maxlength="30" required spellcheck="false" autocomplete="off"><small>What the partition mounts as, such as DH1.</small></div>
+        <div class="field"><label>Volume name</label><input name="label" value="Work" maxlength="30" required spellcheck="false" autocomplete="off"><small>What Workbench shows under its icon.</small></div>
+      </div>
+      ${filesystemField("", "")}
+      <div class="field"><label>Size</label><input name="size" placeholder="All ${esc(humanSize(space.sizeBytes))}" spellcheck="false" autocomplete="off"><small>Written as 512MB or 20GB. Leave it empty to use all of the unused room.</small></div>
+      <label class="check-field"><input type="checkbox" name="bootable"> <span>The machine may boot from this partition</span></label>
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="add">Add partition</button></div>`,
+    async form => {
+      await applyDriveChange(index, "Adding the partition…", () => api(`/api/images/${pane.image.id}/partitions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.get("name"),
+          label: form.get("label"),
+          filesystem: form.get("filesystem"),
+          sizeBytes: String(form.get("size") || "").trim() || null,
+          bootable: form.get("bootable") === "on",
+          bootPriority: form.get("bootable") === "on" ? 0 : -128,
+          lowCylinder: space.lowCylinder,
+        }),
+      }));
+      toast(`${form.get("name")} added and formatted`);
+      reopen();
+    }, { replace: true });
+    wireFilesystemHelp(0);
+  });
+
+  act("[data-partition-format]", async button => {
+    const position = Number(button.dataset.partitionFormat);
+    const part = layout.partitions[position];
+    const current = options.filesystems.find(entry => entry.dosType === dosTypeText(part.dosType));
+    showModal(`
+      <div class="modal-heading"><span class="modal-kicker">FORMAT PARTITION</span><h2>Format ${esc(part.name)}</h2></div>
+      <div class="help-warning"><strong>Everything on ${esc(part.name)} is given up.</strong> The partition keeps its place and its size, and is left holding one empty volume.${liveDrive ? " This is a real drive, so there is no undo." : ""}</div>
+      <div class="field"><label>Volume name</label><input name="label" value="${esc(part.name)}" maxlength="30" required spellcheck="false" autocomplete="off"></div>
+      ${filesystemField(current?.id || "", current?.note || "")}
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button danger" value="format">Format ${esc(part.name)}</button></div>`,
+    async form => {
+      await applyDriveChange(index, `Formatting ${part.name}…`, () => api(`/api/images/${pane.image.id}/partitions/${position}/format`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: form.get("label"), filesystem: form.get("filesystem") }),
+      }));
+      toast(`${part.name} formatted`);
+      reopen();
+    }, { replace: true });
+    wireFilesystemHelp(part.sizeBytes);
+  });
+
+  act("[data-partition-properties]", async button => {
+    const position = Number(button.dataset.partitionProperties);
+    const part = layout.partitions[position];
+    showModal(`
+      <div class="modal-heading"><span class="modal-kicker">PARTITION</span><h2>${esc(part.name)}</h2></div>
+      <p>${esc(part.format)} · ${esc(dosTypeText(part.dosType))} · ${esc(humanSize(part.sizeBytes))} · cylinders ${Number(part.lowCylinder)} to ${Number(part.highCylinder)}. Changing these leaves the volume inside untouched.</p>
+      <div class="field"><label>Device name</label><input name="name" value="${esc(part.name)}" maxlength="30" required spellcheck="false" autocomplete="off"><small>What the partition mounts as. The volume's own name is changed from inside the partition.</small></div>
+      <label class="check-field"><input type="checkbox" name="bootable" ${part.bootable ? "checked" : ""}> <span>The machine may boot from this partition</span></label>
+      <div class="field"><label>Boot priority</label><input name="bootPriority" type="number" min="-128" max="127" value="${Number(part.bootPriority)}" required><small>The machine boots the bootable partition with the highest number. A floppy in DF0: counts as 5.</small></div>
+      <label class="check-field"><input type="checkbox" name="automount" ${part.automount ? "checked" : ""}> <span>Mount this partition when the machine starts</span></label>
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="save">Save</button></div>`,
+    async form => {
+      await applyDriveChange(index, `Changing ${part.name}…`, () => api(`/api/images/${pane.image.id}/partitions/${position}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.get("name"),
+          bootable: form.get("bootable") === "on",
+          bootPriority: Number(form.get("bootPriority")),
+          automount: form.get("automount") === "on",
+        }),
+      }));
+      toast(`${form.get("name")} updated`);
+      reopen();
+    }, { replace: true });
+  });
+
+  act("[data-partition-remove]", async button => {
+    const position = Number(button.dataset.partitionRemove);
+    const part = layout.partitions[position];
+    if (!await confirmChoice(
+      `Remove ${part.name}?`,
+      `${part.name} is taken out of the partition table, and its ${humanSize(part.sizeBytes)} become unused room.`,
+      { confirmLabel: `Remove ${part.name}`, danger: true, note: liveDrive ? "This is a real drive, so there is no undo. The files stay where they are until something is written over them, but nothing will show them." : "Edit → Undo last change brings it back." },
+    )) return;
+    await applyDriveChange(index, `Removing ${part.name}…`, () => api(`/api/images/${pane.image.id}/partitions/${position}`, { method: "DELETE" }));
+    toast(`${part.name} removed`);
+    modal.close();
+    reopen();
+  });
+
+  act("[data-embed-handlers]", async () => {
+    const result = await applyDriveChange(index, "Adding the handler to the drive…", () => api(`/api/images/${pane.image.id}/drive-layout/handlers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }));
+    toast(`Added to the drive: ${result.added.join(", ")}`);
+    modal.close();
+    reopen();
+  });
+
+  act("[data-extend-drive]", async () => {
+    await applyDriveChange(index, "Claiming the rest of the drive…", () => api(`/api/images/${pane.image.id}/drive-layout/extend`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }));
+    toast("The partition table now describes the whole drive");
+    modal.close();
+    reopen();
+  });
+
+  act("[data-grow-image]", async () => {
+    const size = await promptValue("Make the image larger", "New size of the drive", {
+      message: `The image is ${humanSize(pane.image.size)} now. The room added goes at the end, unused, ready for a new partition.`,
+      placeholder: "Such as 8GB or 128GB",
+      confirmLabel: "Make it larger",
+      note: "An image takes room on this machine only for what is put in it, so a larger one costs nothing until it is filled.",
+    });
+    if (!size) return;
+    await applyDriveChange(index, "Making the image larger…", () => api(`/api/images/${pane.image.id}/drive-layout/extend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ size }),
+    }));
+    toast("The image is larger");
+    modal.close();
+    reopen();
+  });
+}
+
+//: Handlers are kept for every drive made from now on, so this dialog is
+//: about the application rather than about the image in the pane. The pane
+//: only matters as somewhere a handler can be taken from.
+async function showHandlerManager(index) {
+  const pane = panes[index];
+  let data;
+  try {
+    data = await rawApi("/api/filesystem-handlers");
+  } catch (error) {
+    return toast(error.message, true);
+  }
+  const canTake = pane?.image?.kind === "hdf";
+  const rows = data.handlers.map(handler => {
+    const state = handler.source === "missing"
+      ? "Not supplied"
+      : `${handler.description || handler.name} · ${humanSize(handler.sizeBytes)} · ${handler.source === "bundled" ? "comes with Amiga File Forge" : `supplied by you${handler.replacesBundled ? ", in place of the one that comes with Amiga File Forge" : ""}`}`;
+    return `<li class="handler-row">
+      <span class="handler-details"><strong>${esc(handler.label)}</strong>
+        <small>${esc(state)}</small>
+        <small>For ${handler.dosTypes.map(dosType => esc(dosTypeText(dosType))).join(", ")} partitions. The file is usually called ${esc(handler.name)}.</small></span>
+      <span class="handler-actions">
+        <button type="button" class="button ghost" data-handler-add="${esc(handler.family)}">${handler.source === "supplied" ? "Replace…" : handler.source === "bundled" ? "Use another…" : "Supply…"}</button>
+        ${handler.source === "supplied" ? `<button type="button" class="button ghost" data-handler-remove="${esc(handler.family)}">Remove</button>` : ""}
+      </span></li>`;
+  }).join("");
+  showModal(`
+    <div class="drive-layout-dialog handler-manager">
+    <div class="modal-heading"><span class="modal-kicker">FILING-SYSTEM HANDLERS</span><h2>Handlers for new drives</h2></div>
+    <p>Kickstart carries the FastFileSystem and nothing else. A partition in any other filing system mounts only if its handler travels with the drive, so every drive made here is given the handlers its partitions need.</p>
+    <ul class="handler-list">${rows}</ul>
+    <input type="file" class="handler-file" hidden>
+    ${canTake ? `<div class="help-note">A drive prepared on an Amiga carries the very handlers its partitions were formatted with. <button type="button" class="button ghost" data-handler-take>Take the handlers from ${esc(pane.image.name)}</button></div>` : ""}
+    <div class="help-note">Supplied handlers are kept in <code>${esc(data.folder)}</code>. A handler is the program the Amiga keeps in <code>L:</code>, not the archive it was distributed in.</div>
+    <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div>
+    </div>`, async () => true);
+  const reopen = () => showHandlerManager(index);
+  const file = modalContent.querySelector(".handler-file");
+  let family = "";
+  modalContent.querySelectorAll("[data-handler-add]").forEach(button => button.addEventListener("click", () => {
+    family = button.dataset.handlerAdd;
+    file.value = "";
+    file.click();
+  }));
+  file.addEventListener("change", async () => {
+    if (!file.files.length) return;
+    const form = new FormData();
+    form.append("family", family);
+    form.append("handler", file.files[0], file.files[0].name);
+    try {
+      const kept = await rawUploadApi("/api/filesystem-handlers", form);
+      toast(`${kept.kept[0].label} kept: ${kept.kept[0].description || kept.kept[0].name}`);
+      modal.close();
+      reopen();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+  modalContent.querySelectorAll("[data-handler-remove]").forEach(button => button.addEventListener("click", async () => {
+    try {
+      await rawApi(`/api/filesystem-handlers/${encodeURIComponent(button.dataset.handlerRemove)}`, { method: "DELETE" });
+      toast("Handler removed");
+      modal.close();
+      reopen();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }));
+  modalContent.querySelector("[data-handler-take]")?.addEventListener("click", async () => {
+    try {
+      const kept = await rawApi("/api/filesystem-handlers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageId: pane.image.id }),
+      });
+      toast(`Kept: ${kept.kept.map(row => row.label).join(", ")}`);
+      modal.close();
+      reopen();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+}
+
+//: A card is partitioned and formatted where it is, so that what is installed
+//: afterwards goes straight onto the thing that will be put in the Amiga. It
+//: erases the card, so the card is named again before anything is written.
+async function initialiseAttachedDrive(index, drive) {
+  const options = await driveLayout.layoutOptions(true);
+  showModal(`
+    <div class="drive-layout-dialog">
+    <div class="modal-heading"><span class="modal-kicker">INITIALISE DRIVE</span><h2>Prepare ${esc(drive.model)} for an Amiga</h2></div>
+    <p>${esc(drive.model)} holds ${esc(humanSize(drive.size))}${drive.contents ? `, and now carries: ${esc(drive.contents)}` : ""}. It is given a new partition table and empty volumes, and then opens in this pane.</p>
+    <div class="help-warning"><strong>Everything on ${esc(drive.model)} is given up.</strong> Only the blocks that describe the new drive are written, so this takes seconds, but what the card held before can no longer be reached.</div>
+    <div class="drive-choices">
+      <label class="check-field drive-choice"><input type="radio" name="shape" value="drive" checked><span><b>Partitions, with a Rigid Disk Block</b><small>What a real Amiga, a PiStorm and every emulator expect. The drive describes itself and carries the handlers its partitions need.</small></span></label>
+      <label class="check-field drive-choice"><input type="radio" name="shape" value="volume"><span><b>One volume, with no partition table</b><small>The whole drive as a single filing system from its first block. The machine has to be told its geometry, and given the handler, separately.</small></span></label>
+    </div>
+    <div class="initialise-drive-layout">${driveLayout.editorMarkup(options, { sizeLabel: `${humanSize(drive.size)} to divide` })}</div>
+    <div class="initialise-drive-volume" hidden>
+      <div class="field"><label>Volume name</label><input name="volumeLabel" value="Empty" maxlength="30" spellcheck="false" autocomplete="off"></div>
+      <div class="field"><label>Filing system</label><select name="volumeFilesystem">${driveLayout.filesystemChoices(options, "", { placeholder: "Choose a filing system…", without: ["pds3"] })}</select><small data-volume-help></small></div>
+    </div>
+    <label class="check-field"><input type="checkbox" name="allowWrites" checked> <span>Allow writes to the drive once it is open, so that Workbench and software can be installed onto it straight away</span></label>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button danger" value="initialise" disabled>Erase and initialise</button></div>
+    </div>`,
+  async form => {
+    const shape = form.get("shape");
+    const body = { id: drive.id, confirm: drive.id, allowWrites: form.get("allowWrites") === "on" };
+    if (shape === "volume") {
+      body.volume = { filesystem: form.get("volumeFilesystem"), label: form.get("volumeLabel") };
+    } else {
+      body.partitions = editor.partitions();
+    }
+    if (!await confirmChoice(
+      `Erase ${drive.model}?`,
+      `${drive.model} (${humanSize(drive.size)}, ${drive.device}) will be given a new ${shape === "volume" ? "volume" : "partition table"}. Everything on it now is given up.`,
+      { confirmLabel: "Erase and initialise", danger: true, note: "Check that this is the card you mean. A drive that is erased cannot be brought back." },
+    )) return false;
+    const data = await trackedPaneOperation(index, `Initialising ${drive.model}…`, operationId =>
+      api("/api/desktop/attached-drives/initialise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, operationId }),
+      }), { abortMode: "clone" });
+    await acceptImage(index, data.image);
+    toast(`${drive.model} is ready${data.image.attachedDrive?.writesAllowed ? " and open for writing" : ""}`);
+  }, { replace: true });
+  const submit = modalContent.querySelector('button[value="initialise"]');
+  const layoutHost = modalContent.querySelector(".initialise-drive-layout");
+  const volumeHost = modalContent.querySelector(".initialise-drive-volume");
+  const volumeFilesystem = modalContent.querySelector('[name="volumeFilesystem"]');
+  const volumeHelp = modalContent.querySelector("[data-volume-help]");
+  const shapeOf = () => modalContent.querySelector('[name="shape"]:checked').value;
+  const volumeReady = () => {
+    const chosen = options.filesystems.find(entry => entry.id === volumeFilesystem.value);
+    if (!chosen) return false;
+    const fits = drive.size <= chosen.largest;
+    volumeHelp.textContent = fits
+      ? chosen.note
+      : `${chosen.label} stops at ${humanSize(chosen.largest)} for one volume, and this drive is ${humanSize(drive.size)}. ${chosen.family === "ffs" ? "Use the Professional File System, or give the drive partitions." : "Give the drive partitions instead."}`;
+    return fits;
+  };
+  const editor = driveLayout.attachEditor(layoutHost, options, {
+    driveSize: () => drive.size,
+    onChange: state => {
+      if (shapeOf() === "drive") submit.disabled = !state.valid;
+    },
+  });
+  const update = () => {
+    const volume = shapeOf() === "volume";
+    layoutHost.hidden = volume;
+    volumeHost.hidden = !volume;
+    submit.disabled = volume ? !volumeReady() : !editor.state.valid;
+  };
+  modalContent.querySelectorAll('[name="shape"]').forEach(input => input.addEventListener("change", update));
+  volumeFilesystem.addEventListener("change", update);
+  update();
+}
+
+//: An image is written by the server straight to the card. Only what the
+//: image holds is written unless every byte is asked for, which is what makes
+//: putting the image of a 128 GB card onto the card a matter of minutes.
+async function writeImageToDrive(index) {
+  const pane = panes[index];
+  let options = await api(`/api/desktop/images/${pane.image.id}/drive-write`);
+  const targetRows = () => {
+    const rows = options.targets.map(drive => `<label class="check-field drive-choice">
+        <input type="radio" name="target" value="${esc(drive.id)}"${drive.problem ? " disabled" : ""}>
+        <span><b>${esc(drive.model)} · ${esc(humanSize(drive.size))}</b>
+        <small>${esc(drive.contents || "Contents unknown")} · ${esc(drive.device)}</small>
+        ${drive.problem ? `<small class="drive-choice-note">${esc(drive.problem)}</small>` : drive.unusedBytes > 0 ? `<small>${esc(humanSize(drive.unusedBytes))} of it will be left over, which can be claimed afterwards from Tools → Partitions…</small>` : ""}</span>
+      </label>`).join("");
+    if (!rows) return '<div class="help-note">No drive is attached through USB. Attach the card to write to, then choose Refresh.</div>';
+    return options.targets.some(drive => !drive.problem) ? rows : `${rows}<div class="help-note">None of these drives can take the image yet. Deal with what each one says, then choose Refresh.</div>`;
+  };
+  showModal(`
+    <div class="modal-heading"><span class="modal-kicker">WRITE TO DRIVE</span><h2>Write ${esc(pane.image.name)} to a drive</h2></div>
+    <p>The image describes a drive of ${esc(humanSize(options.imageBytes))} and holds ${esc(humanSize(options.heldBytes))}. Everything on the drive you choose is given up, and what is written is read back from the drive and checked.</p>
+    <div class="clone-targets-heading"><strong>Drive to erase and write to</strong><button type="button" class="button ghost refresh-write-targets">Refresh</button></div>
+    <div class="drive-choices write-targets"></div>
+    <label class="check-field"><input type="checkbox" name="everyByte"> <span>Write every byte, the empty space included</span></label>
+    <div class="help-note" data-write-note></div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button danger" value="write" disabled>Erase and write</button></div>`,
+  async form => {
+    const targetId = String(form.get("target") || "");
+    const target = options.targets.find(drive => drive.id === targetId);
+    if (!target) throw new Error("Choose the drive to write to.");
+    if (!await confirmChoice(
+      `Erase ${target.model}?`,
+      `${target.model} (${humanSize(target.size)}, ${target.device}) will be replaced with ${pane.image.name}.`,
+      { confirmLabel: "Erase and write", danger: true, note: "Check that this is the card you mean. A drive that is erased cannot be brought back." },
+    )) return false;
+    const data = await trackedPaneOperation(index, `Writing ${pane.image.name} to ${target.model}…`, operationId =>
+      api(`/api/desktop/images/${pane.image.id}/drive-write`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: targetId, confirm: targetId, everyByte: form.get("everyByte") === "on", operationId }),
+      }), { abortMode: "clone" });
+    if (data.image) {
+      pane.image = data.image;
+      renderPane(index, true);
+    }
+    toast(`${data.result.target} now holds a verified copy of ${pane.image.name}`);
+  });
+  const list = modalContent.querySelector(".write-targets");
+  const submit = modalContent.querySelector('button[value="write"]');
+  const note = modalContent.querySelector("[data-write-note]");
+  const everyByte = modalContent.querySelector('[name="everyByte"]');
+  const draw = () => {
+    const chosen = list.querySelector('[name="target"]:checked')?.value;
+    list.innerHTML = targetRows();
+    const keep = chosen && list.querySelector(`[name="target"][value="${CSS.escape(chosen)}"]:not(:disabled)`);
+    if (keep) keep.checked = true;
+    submit.disabled = !list.querySelector('[name="target"]:checked');
+    list.querySelectorAll('[name="target"]').forEach(input => input.addEventListener("change", () => {
+      submit.disabled = false;
+    }));
+  };
+  const describe = () => {
+    note.textContent = everyByte.checked
+      ? `All ${humanSize(options.everyByteBytes)} are written and checked, so nothing of what the drive held before remains. At the speed of a card over USB 3 that is about ten minutes for 128 GB, and much longer for a slow card.`
+      : `Only the ${humanSize(options.heldBytes)} the image holds are written and checked. The start of the drive and its last mebibyte are always cleared, so nothing finds the drive's old partitions.`;
+  };
+  everyByte.addEventListener("change", describe);
+  describe();
+  draw();
+  const refresh = modalContent.querySelector(".refresh-write-targets");
+  refresh.addEventListener("click", async () => {
+    refresh.disabled = true;
+    try {
+      options = await api(`/api/desktop/images/${pane.image.id}/drive-write`);
+      draw();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      refresh.disabled = false;
+    }
+  });
+}
+
+//: The usual save builds a ZIP of the whole image. For a drive of many
+//: gigabytes that would write every one of them, so a drive image is saved as
+//: it is: a file of the drive's full size that takes only the room its
+//: contents need.
+async function saveDriveImage(index) {
+  const pane = panes[index];
+  const hasNativeDialog = Boolean(window.webkit?.messageHandlers?.amigaDesktop);
+  const options = await api(`/api/desktop/images/${pane.image.id}/save-image`);
+  const scopes = options.scopes || [];
+  if (!scopes.length) throw new Error("This image offers nothing to save.");
+  const fileNameFor = scope => {
+    const partition = /^Partition (\S+)/.exec(scope.label);
+    if (scope.scope.startsWith("partition:") && partition) return `${options.stem}-${partition[1]}${scope.suffix}`;
+    if (scope.scope === "drive") return `${options.stem}-drive${scope.suffix}`;
+    return options.name;
+  };
+  const rows = scopes.map((scope, position) => `<label class="check-field drive-choice">
+      <input type="radio" name="scope" value="${esc(scope.scope)}"${position === 0 ? " checked" : ""}>
+      <span><b>${esc(scope.label)}</b><small>${esc(humanSize(scope.bytes))}</small></span>
+    </label>`).join("");
+  showModal(`
+    <div class="modal-heading"><span class="modal-kicker">SAVE DRIVE IMAGE</span><h2>Save ${esc(pane.image.name)} to a file</h2></div>
+    <p>Space the drive leaves empty is not written, so on most Linux filing systems the file takes only the room its contents need, whatever size it reports.</p>
+    <div class="drive-choices">${rows}</div>
+    <div class="field"><label>Save as</label>
+      <div class="path-field"><input name="destination" required spellcheck="false" value="${esc(`${options.folder}/${fileNameFor(scopes[0])}`)}">
+      ${hasNativeDialog ? '<button type="button" class="button ghost choose-destination">Choose…</button>' : ""}</div>
+      <small>Give the full path of the file. A partition on its own, and a hardfile, are saved with a .geo file beside them, which holds the geometry.</small></div>
+    <div class="help-note">Copying the file to a filing system or a service that does not keep empty space empty makes it take its full size. <strong>Write image to attached drive…</strong> puts it on a card without going through a file at all.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="save">Save</button></div>`,
+  async form => {
+    const destination = String(form.get("destination") || "").trim();
+    const scope = String(form.get("scope") || "image");
+    const data = await trackedPaneOperation(index, `Saving ${pane.image.name}…`, operationId =>
+      api(`/api/desktop/images/${pane.image.id}/save-image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ destination, scope, operationId }),
+      }), { abortMode: "read-only" });
+    applySavedImageSummary(data.image);
+    toast(`Saved ${data.result.path}${data.result.geometry ? " and its .geo" : ""}, using ${humanSize(data.result.written)}`);
+  });
+  const destinationInput = modalContent.querySelector('[name="destination"]');
+  modalContent.querySelectorAll('[name="scope"]').forEach(input => {
+    input.addEventListener("change", () => {
+      const scope = scopes.find(entry => entry.scope === input.value);
+      const { folder } = splitHostPath(destinationInput.value);
+      destinationInput.value = `${folder || options.folder}/${fileNameFor(scope)}`;
+    });
+  });
+  modalContent.querySelector(".choose-destination")?.addEventListener("click", async () => {
+    const { folder, name } = splitHostPath(destinationInput.value);
+    const chosen = await nativeSavePath(folder || options.folder, name || options.name, "Save the drive image");
+    if (chosen) destinationInput.value = chosen;
   });
 }
 
@@ -5468,13 +6066,21 @@ async function newImageFromFileMenu(index, initialFormat) {
   }
 }
 
-function showCreateImageModal(preferredIndex = null, options = {}) {
+async function showCreateImageModal(preferredIndex = null, options = {}) {
+  // The editor's choices come from the server, which is also what checks the
+  // layout, so the two cannot disagree about a limit. Without them the dialog
+  // still creates floppies and ROMs.
+  const layoutChoices = await driveLayout.layoutOptions(true).catch(() => null);
+  const attachedSizes = layoutChoices && hasHostCapability("attached-drive-access")
+    ? await rawApi("/api/desktop/attached-drives").then(data => data.drives || []).catch(() => [])
+    : [];
   const firstEmpty = panes.findIndex(pane => !pane.image);
   const defaultTarget = preferredIndex ?? (firstEmpty < 0 ? 0 : firstEmpty);
   const currentProfile = panes[defaultTarget]?.image?.hardwareProfile || {};
   const currentMachine = `${currentProfile.machine || ""} ${panes[defaultTarget]?.image?.targetHardware || ""}`.toLowerCase();
   const kickfsHardwareDefault = currentMachine.match(/a500|a2000/) ? "a500-ofs" : currentMachine.match(/a600|a1200|a3000|a4000/) ? "a1200-ffs" : "auto";
   showModal(`
+    <div class="create-image-dialog">
     <h2>Create a blank image</h2>
     <p>The new image opens as an editable working copy and can be downloaded when ready.</p>
     <div class="field" ${options.lockTarget ? "hidden" : ""}><label>Open new image in</label><select name="targetPane">
@@ -5512,7 +6118,14 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
       </optgroup>
     </select></div>
     <div class="field"><label>Volume name</label><input name="title" maxlength="30" value="Empty" required><small data-title-help></small></div>
-    <div class="field"><label>Image size</label><input name="capacity" value="880 KiB" readonly></div>
+    <div class="field"><label>Image size</label><input name="capacity" value="880 KiB" readonly><small data-capacity-help></small></div>
+    ${layoutChoices ? `<div class="field drive-card-size" hidden><label>Or size it for a card</label><select name="cardSize">
+      <option value="">Choose a card…</option>
+      ${attachedSizes.length ? `<optgroup label="Attached now">${attachedSizes.map(drive => `<option value="${Number(drive.size)}">${esc(drive.model)} · ${esc(humanSize(drive.size))} exactly</option>`).join("")}</optgroup>` : ""}
+      <optgroup label="By the size on the label">${layoutChoices.cardSizes.map(card => `<option value="${Number(card.sizeBytes)}">${esc(card.label)} · ${esc(humanSize(card.sizeBytes))}</option>`).join("")}</optgroup>
+    </select><small>A card holds less than its label says, because its maker counts in thousands: a 128 GB card is about 119 GiB. An image sized from this list fits the card, and the little that is left over can be claimed once the image is on it.</small></div>
+    <div class="field bare-filesystem" hidden><label>Filing system</label><select name="bareFilesystem"></select><small data-bare-help></small></div>
+    <div class="drive-layout-host" hidden>${driveLayout.editorMarkup(layoutChoices)}</div>` : ""}
     <div class="field"><label>Target hardware</label><select name="targetHardware">
       <option value="auto">Auto / inspect only</option>
       <option value="hardfile">UAE hardfile · HDA + GEO sidecar</option>
@@ -5539,10 +6152,19 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
       <div class="field"><label>Resident identification string</label><input name="kickfsCopyright" maxlength="120" value="forge.library 1.0 (${new Date().getFullYear()})" required></div>
       <div class="help-note">Creates a valid ROM image around one <code>&amp;4AFC</code> resident tag: the size header, a jump to the entry point, the module name and identification string, the declared size and the ROM checksum. The ROM scan on a real machine will find the module. It does not create a bootable Kickstart.</div>
     </div>
-    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="create">Create image</button></div>`,
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="create">Create image</button></div>
+    </div>`,
   async form => {
     const targetIndex = options.lockTarget ? defaultTarget : Number(form.get("targetPane"));
     if (!panes[targetIndex]) throw new Error("Choose a valid destination pane.");
+    const chosenFormat = form.get("format");
+    let drive;
+    if (layoutChoices && chosenFormat === "ffs-hard") {
+      if (!layoutEditor?.state.valid) throw new Error("Finish the partition layout first: every partition needs a filing system, and whatever the layout reports has to be put right.");
+      drive = { partitions: layoutEditor.partitions() };
+    } else if (layoutChoices && ["hardfile", "ffs-physical"].includes(chosenFormat)) {
+      drive = { filesystem: form.get("bareFilesystem") || "ffs-intl" };
+    }
     if (panes[targetIndex].image?.dirty && !await confirmChoice(
       "Replace an edited image?",
       `${paneLabel(targetIndex)} has changes that have not been downloaded.`,
@@ -5555,6 +6177,7 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
         title: form.get("title") || "BLANK",
         capacity: form.get("capacity"),
         targetHardware: form.get("format") === "kickfs" ? form.get("kickfsPlatform") : (modalContent.querySelector('select[name="targetHardware"]').value || "auto"),
+        drive,
         rom: form.get("format") === "rom" ? {
           platform: form.get("romPlatform"),
           totalSize: Number(form.get("romTotalSize")),
@@ -5581,6 +6204,35 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
   const titleHelp = modalContent.querySelector("[data-title-help]");
   const targetHardware = modalContent.querySelector('select[name="targetHardware"]');
   const hardwareHelp = modalContent.querySelector("[data-hardware-help]");
+  const capacityHelp = modalContent.querySelector("[data-capacity-help]");
+  const createButton = modalContent.querySelector('button[value="create"]');
+  const dialogRoot = modalContent.querySelector(".create-image-dialog");
+  const cardSize = modalContent.querySelector('[name="cardSize"]');
+  const bareFilesystem = modalContent.querySelector('[name="bareFilesystem"]');
+  const bareHelp = modalContent.querySelector("[data-bare-help]");
+  const layoutHost = modalContent.querySelector(".drive-layout-host");
+  const isPartitioned = () => Boolean(layoutChoices) && format.value === "ffs-hard";
+  const layoutEditor = layoutChoices ? driveLayout.attachEditor(layoutHost, layoutChoices, {
+    driveSize: () => capacity.value.trim(),
+    onChange: state => {
+      if (isPartitioned()) createButton.disabled = !state.valid;
+    },
+  }) : null;
+  capacity.addEventListener("input", () => {
+    if (cardSize) cardSize.value = "";
+    if (isPartitioned()) layoutEditor.recheck();
+  });
+  cardSize?.addEventListener("change", () => {
+    if (!cardSize.value) return;
+    // Whole mebibytes, which is what a partition table can describe and
+    // what reads back as the same number when it is typed again.
+    capacity.value = `${Math.floor(Number(cardSize.value) / (1024 * 1024))}MB`;
+    if (isPartitioned()) layoutEditor.reapplyPreset().then(() => layoutEditor.recheck());
+  });
+  bareFilesystem?.addEventListener("change", () => {
+    const chosen = layoutChoices.filesystems.find(entry => entry.id === bareFilesystem.value);
+    bareHelp.textContent = chosen ? `${chosen.note} One volume can be up to ${humanSize(chosen.largest)}.` : "";
+  });
   // Every Amiga floppy is the same disk: 880 KiB DS/DD, or 1760 KiB on the
   // high-density drives of the A3000 and A4000, whichever DOS type formatted
   // it. Only the boot block differs, so the size never changes with the
@@ -5603,7 +6255,7 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
     "hfe-adf-hd": highDensity,
     "hfe-ffs-hd": highDensity,
     hardfile: { size: null, defaultCapacity: "20MB", hardware: "hardfile" },
-    "ffs-hard": { size: null, defaultCapacity: "20MB", hardware: "amigaos" },
+    "ffs-hard": { size: null, defaultCapacity: "512MB", hardware: "amigaos" },
     "ffs-physical": { size: null, defaultCapacity: "20MB", hardware: "amigaos" },
     hdf: { size: "440 MiB (511 × 880 KiB)", hardware: null, hasTitle: false },
     rom: { size: "Set below", hardware: null, chooseHardware: false },
@@ -5624,7 +6276,33 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
     capacity.readOnly = Boolean(profile.size);
     capacity.value = profile.size || capacities.get(format.value) || profile.defaultCapacity;
     capacity.placeholder = profile.size ? "" : profile.defaultCapacity;
-    capacityLabel.textContent = profile.size ? "Image size" : "Hard disk capacity (HDA/HDF/RAW)";
+    capacityLabel.textContent = profile.size ? "Image size" : format.value === "ffs-hard" ? "Drive size" : "Hard disk capacity (HDA/HDF/RAW)";
+    const isHardDrive = ["hardfile", "ffs-hard", "ffs-physical"].includes(format.value);
+    capacityHelp.textContent = isHardDrive
+      ? "Written as 512MB, 4GB or 128GB, counted in powers of 1024 as AmigaDOS counts. The image takes room on this machine only for what is put in it."
+      : "";
+    if (layoutChoices) {
+      const partitioned = format.value === "ffs-hard";
+      modalContent.querySelector(".drive-card-size").hidden = !isHardDrive;
+      layoutHost.hidden = !partitioned;
+      dialogRoot.classList.toggle("drive-layout-dialog", partitioned);
+      const bareField = modalContent.querySelector(".bare-filesystem");
+      bareField.hidden = !isHardDrive || partitioned;
+      if (!bareField.hidden) {
+        const previous = bareFilesystem.value;
+        bareFilesystem.innerHTML = driveLayout.filesystemChoices(
+          layoutChoices,
+          previous || "ffs-intl",
+          // PDS\3 is a way of reaching a partition, recorded in a partition
+          // table. A volume with no table is the same either way.
+          { families: format.value === "hardfile" ? ["ffs"] : null, without: ["pds3"] },
+        );
+        if (![...bareFilesystem.options].some(option => option.selected && option.value)) bareFilesystem.value = "ffs-intl";
+        bareFilesystem.dispatchEvent(new Event("change"));
+      }
+      createButton.disabled = partitioned && !layoutEditor.state.valid;
+      if (partitioned) layoutEditor.recheck();
+    }
 
     const hasTitle = profile.hasTitle !== false;
     title.disabled = !hasTitle;
@@ -5632,10 +6310,14 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
     title.value = hasTitle ? diskTitle : "Not applicable to an HDF bank";
     titleLabel.textContent = ["rom", "kickfs"].includes(format.value)
       ? "ROM filename and title"
-      : ["hardfile", "ffs-hard", "ffs-physical"].includes(format.value)
+      : isPartitioned()
+        ? "Drive image name"
+        : ["hardfile", "ffs-hard", "ffs-physical"].includes(format.value)
           ? "Volume title"
           : "Disk title";
-    titleHelp.textContent = "Stored in the new filesystem.";
+    titleHelp.textContent = isPartitioned()
+      ? "Names the image file. Each partition has a volume name of its own in the table below."
+      : "Stored in the new filesystem.";
 
     targetHardware.value = profile.hardware || "auto";
     targetHardware.disabled = !profile.chooseHardware;
@@ -5658,7 +6340,7 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
       title.maxLength = 8;
       titleHelp.textContent = "Stored as both the Kickstart ROM catalogue title and the .rom filename.";
     } else {
-      title.maxLength = 12;
+      title.maxLength = isPartitioned() ? 30 : 12;
     }
     previousFormat = format.value;
   };
