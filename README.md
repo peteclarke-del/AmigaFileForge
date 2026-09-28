@@ -73,7 +73,7 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./amiga-file-forge_1.6.0-1.deb13_amd64.deb
+sudo apt install ./amiga-file-forge_1.7.0-1.deb13_amd64.deb
 amiga-file-forge
 ```
 
@@ -137,11 +137,12 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current release is `1.6.0`. It provides the editing and transfer workflows
+The current release is `1.7.0`. It provides the editing and transfer workflows
 described in this guide, including movable, resizable and stackable panes, undo
 and named checkpoints, owner-isolated recovery, background job tracking,
-Rigid Disk Block partition maintenance, HFE handling, an Online Library
-and machine-aware compatibility checks. A host-private collection catalogue
+Rigid Disk Block partition maintenance, hard drives of up to 2 TB with a
+partition editor and the filing-system handlers they need, HFE handling, an
+Online Library and machine-aware compatibility checks. A host-private collection catalogue
 retains owned-image manifests, hashes, titles, publishers, machines and physical
 locations, then reports duplicates, variants and missing wanted titles even when
 those images are closed. The web edition uses origin-scoped IndexedDB; the Linux
@@ -2225,7 +2226,7 @@ A partition table carrying a bad-block list or drive initialisation code is
 left exactly as it is. Its partitions can be browsed and changed inside, but
 not added, removed or reformatted.
 
-Drives written by releases up to 1.6.0 recorded the vendor text and the number
+Drives written before release 1.7 recorded the vendor text and the number
 of the last table block in the wrong fields of the Rigid Disk Block. Nothing
 that mounts a partition reads those fields, so the drives worked, but HDToolBox
 showed nonsense for them. Such a drive is still read correctly, and is put
@@ -2857,7 +2858,7 @@ curl http://localhost:8674/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"amiganut","status":"ok","version":"1.6.0"}
+{"engine":"amiganut","status":"ok","version":"1.7.0"}
 ```
 
 ## Main dependencies
