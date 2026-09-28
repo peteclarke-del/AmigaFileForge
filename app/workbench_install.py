@@ -414,12 +414,15 @@ class WorkbenchInstallMixin:
     def amigaos_cd_preflight(self, target: ImageSession, disc: ImageSession) -> dict:
         """Whether this drive, this hardware and this disc can install together.
 
-        Every part of this is checked before an emulator is started, because
-        the alternative is an operator watching a machine boot for a minute to
-        be told something that was knowable from the outset. Nothing here
-        writes to anything.
+        Everything here is knowable before a byte is written, so it is checked
+        first and said in full. Nothing here writes to anything.
+
+        The installation itself needs nothing on the drive beforehand, because
+        it is made from outside the Amiga. ``bootFrom`` answers a different
+        question, which is what would start the machine if the disc's own
+        installer were run under emulation instead.
         """
-        from . import volume_copy
+        from . import amiga_paths, amigaos_cd, boingbag_update, volume_copy
         from .amigaos_cd import processor_ready
         from .emulator_config import profile_addons, profile_machine
 
@@ -428,15 +431,40 @@ class WorkbenchInstallMixin:
         warnings: list[str] = []
         notes: list[str] = []
         boot_from = ""
-        needs_workbench = False
+        plan: dict = {}
         if not found.get("recognised"):
             blocking.append(found.get("reason", "That disc is not an AmigaOS release CD."))
+        else:
+            release = next(
+                item for item in amigaos_cd.RELEASES if item.key == found["release"]
+            )
+            with self.iso_image(disc) as image:
+                planned = amigaos_cd.plan_release(image, release)
+            lacking = [item["label"] for item in planned["missing"] if item["required"]]
+            if lacking:
+                blocking.append(
+                    f"{disc.name} is missing {', '.join(lacking)}, which "
+                    f"{release.label} cannot be installed without. The image may "
+                    "be incomplete."
+                )
+            for item in planned["missing"]:
+                if not item["required"]:
+                    warnings.append(
+                        f"This disc has no {item['source']} drawer, so "
+                        f"{item['label']} will not be installed."
+                    )
+            plan = {
+                "layers": planned["layers"],
+                "files": len(planned["tree"]),
+                "bytes": planned["tree"].total_bytes,
+            }
 
         ready, reason = processor_ready(profile_machine(target), profile_addons(target))
         if not ready:
             blocking.append(reason)
 
         summary = self.summary(target)
+        over = ""
         if not summary.get("hardDisk") and target.kind != "hdf":
             blocking.append(
                 "AmigaOS 3.5 and 3.9 install onto a hard drive. Open a partition on one."
@@ -444,54 +472,52 @@ class WorkbenchInstallMixin:
         elif target.kind == "hdf" and target.partition is None:
             blocking.append("Choose a partition on this hard drive first.")
         else:
-            # The installer runs on the Amiga, so something has to start the
-            # machine. A drive with a system on it starts itself. An empty one
-            # is started from the system the disc carries, which is what the
-            # installer's own full installation onto an empty drive expects.
             device = self.partition_label(target) or "this volume"
             if volume_copy.entry_exists(self, target, STARTUP_SEQUENCE):
                 boot_from = "drive"
-            elif found.get("recognised") and found.get("emergencySystem"):
-                boot_from = "disc"
+                over = "system"
                 notes.append(
-                    f"{device} has no AmigaOS on it, so the machine will start from "
-                    "the emergency system the disc carries. In the installer, choose "
-                    f"the full installation and give it {device} to install onto."
+                    f"{device} already holds a system. Files the release carries "
+                    "replace the ones of the same name, and everything else on the "
+                    "drive is left as it is."
                 )
             else:
-                needs_workbench = True
-                blocking.append(
-                    f"{device} has no AmigaOS on it to start the machine from, and "
-                    "this disc carries no emergency system to start it from instead. "
-                    "Install Workbench 3.1 onto the drive first."
-                )
-            free = summary.get("capacity", {}) if isinstance(summary.get("capacity"), dict) else {}
-            needed = int(found.get("diskSpaceMb") or 0) * 1024 * 1024
-            available = int(free.get("free") or 0)
+                over = "empty"
+                if found.get("recognised") and found.get("emergencySystem"):
+                    boot_from = "disc"
+            try:
+                capacity = self.list_directory(target, amiga_paths.ROOT).get("capacity")
+            except DiskError:
+                capacity = None
+            available = int(capacity.get("free") or 0) if isinstance(capacity, dict) else 0
+            needed = int(plan.get("bytes") or 0) + int(plan.get("files") or 0) * 1024
             if needed and available and available < needed:
-                warnings.append(
+                blocking.append(
                     f"{found.get('label', 'The release')} needs about "
-                    f"{found['diskSpaceMb']} MB and this volume has less free than that."
+                    f"{needed // (1024 * 1024) + 1} MB and {device} has "
+                    f"{available // (1024 * 1024)} MB free."
+                )
+            if summary.get("hardDisk") and not summary.get("bootable"):
+                warnings.append(
+                    f"{device} is not marked bootable in the partition table, so the "
+                    "machine will not start from it until it is."
                 )
 
-        # The emulator mounts the disc as CD0: itself, so the machine sees it
-        # whether or not the drive has a CD driver of its own. What the drive
-        # has is reported, because the real machine will need one.
-        driver = self.cd_driver_state(target) if boot_from == "drive" and not blocking else {}
-        if driver and not driver["active"]:
-            warnings.append(
-                "This drive has no CD-ROM driver switched on. The emulator shows the "
-                "disc as CD0: regardless, so the installation is not affected, but "
-                "a real machine will need one to read a CD."
-            )
+        # A real machine needs a CD driver of its own to read a disc. The
+        # emulator shows one regardless, so this only matters afterwards.
+        driver = self.cd_driver_state(target) if over == "system" and not blocking else {}
+        unavailable = boingbag_update.cannot_run(target)
         return {
             "ready": not blocking,
             "disc": found,
+            "plan": plan,
+            "over": over if not blocking else "",
             "machine": profile_machine(target),
             "processorReady": ready,
             "cdDriver": driver,
             "bootFrom": boot_from if not blocking else "",
-            "needsWorkbench": needs_workbench,
+            "needsWorkbench": False,
+            "updater": {"available": not unavailable, "reason": unavailable},
             "blocking": blocking,
             "warnings": warnings,
             "notes": notes,

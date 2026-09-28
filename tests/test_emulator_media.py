@@ -30,7 +30,7 @@ from app.emergency_boot import (
 from app.emulator_config import emulator_command
 from app.emulator_media import StagedMedia, is_confined
 from app.errors import DiskError
-from tests.iso_fixture import build_iso, directory, file
+from tests import amigaos_fixture
 
 try:
     from app.server import create_app
@@ -59,20 +59,9 @@ STARTUP = "\n".join([
 
 
 def release_disc(folder: Path, *, emergency: bool = True) -> Path:
-    tree = directory("")
-    tree.add(directory("OS-Version3.9")).add(file("OS3.9Install", b"(script)"))
-    if emergency:
-        system = tree.add(directory("Emergency-Boot"))
-        system.add(directory("S")).add(file("Startup-Sequence", STARTUP.encode("latin-1")))
-        commands = system.add(directory("C"))
-        commands.add(file("LoadWB", b"\x00\x00\x03\xf3 loadwb"))
-        commands.add(file("SetPatch", b"\x00\x00\x03\xf3 setpatch" * 400))
-        system.add(directory("Libs")).add(file("icon.library", os.urandom(40_000)))
-        system.add(directory("Devs")).add(directory("Monitors")).add(file("PAL", b"monitor"))
-        system.add(file("Disk.info", b"icon"))
-    path = folder / "AmigaOS39.iso"
-    path.write_bytes(build_iso(tree, volume="AmigaOS3.9"))
-    return path
+    return amigaos_fixture.release_disc(
+        folder, emergency=emergency, emergency_startup=STARTUP
+    )
 
 
 class ConfinementTests(unittest.TestCase):
@@ -384,9 +373,9 @@ class InstallRouteTests(StagingFixture):
             "hardwareProfile": {"machine": "a1200", "addons": ["kick31"]},
         }
 
-    def test_an_empty_drive_is_installed_onto_from_the_disc(self) -> None:
+    def test_an_empty_drive_is_started_from_the_disc_for_its_own_installer(self) -> None:
         image, body = self.prepare()
-        started = self.request("POST", f"/api/images/{image}/install/amigaos-cd", body)
+        started = self.request("POST", f"/api/images/{image}/install/amigaos-cd/boot", body)
 
         self.assertEqual(started.status_code, 200, started.get_json())
         result = started.get_json()["result"]
@@ -419,7 +408,7 @@ class InstallRouteTests(StagingFixture):
         listed = self.request("GET", f"/api/images/{image}/checkpoints").get_json()
         self.assertEqual(
             [item["reason"] for item in listed["checkpoints"]],
-            ["installing AmigaOS from a release CD"],
+            ["running the installer on an AmigaOS release CD"],
         )
 
         self.emulator.stop()
@@ -433,7 +422,7 @@ class InstallRouteTests(StagingFixture):
         image, body = self.prepare()
         session = self.client.application.extensions["amiga_disk_service"].get(image)
         before = session.path.read_bytes()
-        started = self.request("POST", f"/api/images/{image}/install/amigaos-cd", body)
+        started = self.request("POST", f"/api/images/{image}/install/amigaos-cd/boot", body)
         self.assertEqual(started.status_code, 200, started.get_json())
         self.assertEqual(session.path.read_bytes(), before)
 
@@ -443,10 +432,11 @@ class InstallRouteTests(StagingFixture):
             "POST", f"/api/images/{image}/install/amigaos-cd/preflight", body
         ).get_json()["preflight"]
         self.assertTrue(checked["disc"]["recognised"])
-        self.assertTrue(checked["needsWorkbench"])
-        refused = self.request("POST", f"/api/images/{image}/install/amigaos-cd", body)
+        self.assertTrue(checked["ready"], "the drive can still be installed onto directly")
+        self.assertEqual(checked["bootFrom"], "")
+        refused = self.request("POST", f"/api/images/{image}/install/amigaos-cd/boot", body)
         self.assertEqual(refused.status_code, 400)
-        self.assertIn("Install Workbench 3.1", refused.get_json()["error"])
+        self.assertIn("no emergency system", refused.get_json()["error"])
         self.assertEqual(self.started, [])
         self.assertFalse(self.snap.exists())
 

@@ -1699,3 +1699,10 @@ dialog:has(.drive-layout-dialog) { width: min(900px, calc(100vw - 28px)); }
   .handler-row { align-items: stretch; flex-direction: column; }
   .drive-layout-actions { justify-content: flex-start; }
 }
+
+/* The layers of an AmigaOS release, listed before it is installed. */
+.install-layers { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 0.92em; }
+.install-layers th, .install-layers td { padding: 3px 8px 3px 0; text-align: left; vertical-align: top; }
+.install-layers th { font-weight: 600; border-bottom: 1px solid var(--line); }
+.install-layers td:last-child, .install-layers th:last-child { text-align: right; padding-right: 0; }
+.pack-list { display: grid; gap: 6px; margin: 8px 0; }

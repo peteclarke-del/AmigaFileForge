@@ -758,15 +758,22 @@ function showHelp() {
             <div class="help-task">
               <h4>Install AmigaOS 3.5 or 3.9 from CD</h4>
               <ol>
-                <li>These releases are not installed the way 3.1 is. The disc carries a Commodore Installer script that runs on the Amiga, reads the versions the live system has loaded and asks where the system should go. It cannot be run unattended, so Amiga File Forge checks what it can and then hands you the machine.</li>
+                <li>Amiga File Forge installs these releases itself. When it has finished, the drive holds the system and starts the machine, with nothing left to do inside an emulator.</li>
                 <li>Choose <strong>Tools &rarr; Install AmigaOS 3.5 or 3.9</strong> with a partition open, then point it at the ISO of the disc you own. Nothing is downloaded.</li>
-                <li>The disc is identified by the volume name Commodore wrote, then confirmed by its own drawer, so a contribution CD is not mistaken for a release.</li>
-                <li>Both need a 68020 or better. An A1200, A3000, A4000 or CD32 qualifies on its own, as does any machine with a 68020 to 68060 accelerator or a PiStorm. A stock A500 or A600 is told so rather than left to find out from a machine that will not start.</li>
-                <li>The dialog says separately whether the disc is fine and whether the drive is ready, so a drive that is not ready does not read as a disc that failed.</li>
-                <li>An empty drive can be installed onto. It has nothing to start the machine from, so the machine is started from the emergency system the disc carries, with the empty drive attached beside it. In the installer, choose the full installation and give it the empty partition. Nothing from the emergency system is put on your drive.</li>
-                <li>Every blocking reason is shown at once. When they are clear, <strong>Boot with the CD</strong> starts the machine with the disc in the CD drive; open the disc and run its installation icon. Close the emulator when the installer has finished.</li>
-                <li>The emulator is given the drive itself and not a copy, so what the installer writes is kept. An undo point is taken first, and the drive cannot be changed from the workbench until the emulator is closed.</li>
-                <li>The emulator shows the disc as <code>CD0:</code> itself, so nothing is written to the drive to prepare it. A real machine still needs a CD driver of its own, and the dialog says when the drive has none switched on.</li>
+                <li>The disc carries the system as directory trees, so the installation is a copy made in the right order. On the 3.9 disc that is <code>Workbench3.5</code>, then <code>Workbench3.9</code> over it, then the locale files, keymaps, printer drivers, updated commands and backdrops. On the 3.5 disc, Workbench 3.1 is laid down first from the disc's own copy. The layout is the one each disc's Installer script uses.</li>
+                <li>The disc is identified by the volume name Commodore wrote and confirmed by its system trees, so a contribution CD is not mistaken for a release and a disc whose name was changed is still recognised.</li>
+                <li>Both need a 68020 or better. An A1200, A3000, A4000 or CD32 qualifies on its own, as does any machine with a 68020 to 68060 accelerator or a PiStorm. A stock A500 or A600 is told so before anything is written.</li>
+                <li>The drive does not need a system on it. When it has one, files the release carries replace the ones of the same name and everything else on the drive is left as it is. <code>S/User-Startup</code> is never replaced.</li>
+                <li>The dialog lists what will be installed, layer by layer, before you commit to it. An undo point is taken first, so <strong>Edit &rarr; Undo last change</strong> puts the drive back.</li>
+                <li>To add the update packs, choose <strong>Choose BoingBag archives</strong> and pick the LHA archives you have. One archive may hold several packs. Each pack found is listed with a tick box, and they are applied oldest first.</li>
+                <li>BoingBags 1 and 2 for 3.9 keep their fixes in an archive only their own Updater can open. That Updater is run in FS-UAE, which opens a window of its own for a few minutes for each pack and closes it again. Nothing needs doing in that window. It needs FS-UAE and a Kickstart 3.1 ROM, and where either is missing the fixes that could not be applied are listed by name.</li>
+                <li>BoingBags 3 and 4 are a community release that replaces core components. The build of each library installed is the one for the processor in the hardware profile. Untick them for a stock system.</li>
+                <li><strong>Run the disc's installer instead</strong> starts the machine in the emulator with the disc in its CD drive, for choosing what the installer leaves out. It is not needed to install the release. An empty drive is started from the emergency system the disc carries.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>How the Workbench floppies are matched</h4>
+              <ol>
                 <li>Disks are recognised by the volume name inside each image, not by its file name, so a folder of inconsistently named dumps is read correctly and anything that is not part of a release is ignored.</li>
                 <li>The release is decided from the Workbench disk and every other disk is matched to it. Mixing releases produces a system whose parts disagree with each other, so a disk from another release is left out rather than installed.</li>
                 <li>Workbench and Extras merge into the root; Fonts, Locale, Storage, Classes, Backdrops and Install become drawers of their own. Workbench is copied first, so its full <code>C:</code>, <code>L:</code> and <code>Libs:</code> are not replaced by the cut-down copies the other disks carry.</li>
