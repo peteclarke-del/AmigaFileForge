@@ -73,7 +73,7 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./amiga-file-forge_1.7.0-1.deb13_amd64.deb
+sudo apt install ./amiga-file-forge_1.7.1-1.deb13_amd64.deb
 amiga-file-forge
 ```
 
@@ -137,7 +137,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current release is `1.7.0`. It provides the editing and transfer workflows
+The current release is `1.7.1`. It provides the editing and transfer workflows
 described in this guide, including movable, resizable and stackable panes, undo
 and named checkpoints, owner-isolated recovery, background job tracking,
 Rigid Disk Block partition maintenance, hard drives of up to 2 TB with a
@@ -2866,7 +2866,7 @@ curl http://localhost:8674/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"amiganut","status":"ok","version":"1.7.0"}
+{"engine":"amiganut","status":"ok","version":"1.7.1"}
 ```
 
 ## Main dependencies
