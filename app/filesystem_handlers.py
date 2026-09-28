@@ -9,10 +9,17 @@ creating the drive rather than something to be added by hand afterwards.
 
 Two places hold handlers. The application ships the Professional File System,
 which its licence allows. Anything else is supplied by the person using the
-application and kept in their own configuration directory; a handler there
-takes the place of a shipped one for the same filing system, which is how a
-newer release of PFS3 is used without waiting for a new release of this
-application.
+application; a supplied handler takes the place of a shipped one for the same
+filing system, which is how a newer release of PFS3 is used without waiting
+for a new release of this application.
+
+Where a supplied handler is kept follows how the application was installed.
+A copy installed for one person, from a checkout in their home directory,
+keeps it in that person's configuration directory. A copy installed for the
+whole machine, from a package or as the Docker service, keeps it in one place
+for everyone who uses that copy. Writing there takes an administrator's
+permission, which the desktop application asks for the way its own update
+does.
 
 A handler can also be lifted out of a drive or a drive image that carries one.
 A card prepared on the Amiga, or an image made by another tool, holds exactly
@@ -24,18 +31,30 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable
 
 from .checksum import sha256_bytes
 from .errors import DiskError
-from .image_session import SESSION_OWNER
 
-#: Whether each owner keeps handlers of their own. The web host serves several
-#: people, and a handler is a program the Amiga will run: a drive made by one
-#: person must not carry a program that another person chose. The desktop
-#: host has one owner and sets nothing.
-PER_OWNER = False
+#: Whether this process may ask for an administrator's password. Only the
+#: desktop host may: it runs in the session of the person at the machine. The
+#: person using the web host may be on another computer.
+MAY_ASK_FOR_PASSWORD = False
+
+APPLICATION_ROOT = Path(__file__).resolve().parent.parent
+
+#: Where a copy installed for the whole machine keeps supplied handlers.
+MACHINE_DIRECTORY = Path("/var/lib/amiga-file-forge/handlers")
+
+# pkexec's exit statuses when the password prompt is dismissed or refused.
+PKEXEC_DISMISSED = 126
+PKEXEC_REFUSED = 127
 
 BUNDLED_DIR = Path(__file__).resolve().parent / "handlers"
 
@@ -95,14 +114,70 @@ def family_for(dos_type: bytes) -> Family | None:
     return None
 
 
+def install_scope(root: Path | None = None) -> str:
+    """Say whether this copy is installed for one person or for the machine.
+
+    A copy inside somebody's home directory, or one that the person running
+    it owns, is theirs. Anything else was put there for everyone: a package
+    under ``/opt``, or the Docker service. ``AMIGA_FILE_FORGE_INSTALL_SCOPE``
+    settles it for an installation this cannot tell apart.
+    """
+    declared = os.environ.get("AMIGA_FILE_FORGE_INSTALL_SCOPE", "").strip().lower()
+    if declared in ("user", "machine"):
+        return declared
+    root = Path(root or APPLICATION_ROOT)
+    try:
+        root.resolve().relative_to(Path.home().resolve())
+        return "user"
+    except (ValueError, OSError, RuntimeError):
+        pass
+    try:
+        user = os.getuid()
+        if user != 0 and root.stat().st_uid == user:
+            return "user"
+    except (AttributeError, OSError):
+        pass
+    return "machine"
+
+
 def user_directory() -> Path:
-    """Where handlers the user supplied are kept."""
-    return Path(
-        os.environ.get(
-            "AMIGA_FILE_FORGE_HANDLER_DIR",
-            Path.home() / ".config" / "amiga-file-forge" / "handlers",
-        )
-    )
+    """Where supplied handlers are kept, for one person or for the machine."""
+    configured = os.environ.get("AMIGA_FILE_FORGE_HANDLER_DIR")
+    if configured:
+        return Path(configured)
+    if install_scope() == "machine":
+        return MACHINE_DIRECTORY
+    return Path.home() / ".config" / "amiga-file-forge" / "handlers"
+
+
+def _can_write(folder: Path) -> bool:
+    """Whether this process can create files in a folder, or create the folder."""
+    probe = folder
+    while not probe.exists():
+        if probe.parent == probe:
+            return False
+        probe = probe.parent
+    return probe.is_dir() and os.access(probe, os.W_OK | os.X_OK)
+
+
+def _as_administrator(
+    command: list[str],
+    refusal: str,
+    by_hand: str,
+    run: Callable[..., Any],
+) -> None:
+    """Run one command with an administrator's permission, or say what to run."""
+    pkexec = shutil.which("pkexec")
+    if not MAY_ASK_FOR_PASSWORD or not pkexec:
+        raise DiskError(f"{refusal} An administrator can do it with: {by_hand}")
+    try:
+        result = run([pkexec, *command], capture_output=True, text=True, check=False)
+    except OSError as exc:
+        raise DiskError(f"{refusal} An administrator can do it with: {by_hand}") from exc
+    if result.returncode == PKEXEC_DISMISSED:
+        raise DiskError("The password prompt was dismissed, so nothing was changed.")
+    if result.returncode != 0:
+        raise DiskError(f"{refusal} An administrator can do it with: {by_hand}")
 
 
 def version_text(binary: bytes) -> str:
@@ -152,6 +227,19 @@ def check_handler(binary: bytes, family: Family) -> None:
         )
 
 
+def storage() -> dict:
+    """Describe where supplied handlers go, for the dialog that takes them."""
+    folder = user_directory()
+    scope = "machine" if folder == MACHINE_DIRECTORY or install_scope() == "machine" else "user"
+    writable = _can_write(folder)
+    return {
+        "scope": scope,
+        "folder": str(folder),
+        "writable": writable,
+        "asksForPassword": not writable and MAY_ASK_FOR_PASSWORD and bool(shutil.which("pkexec")),
+    }
+
+
 def _describe(path: Path, family: Family, source: str, name: str = "") -> dict:
     binary = path.read_bytes()
     return {
@@ -172,25 +260,8 @@ def _bundled_path(family: Family) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-def owner_directory() -> Path:
-    """Where this request's owner keeps the handlers they supplied."""
-    base = user_directory()
-    owner = SESSION_OWNER.get() if PER_OWNER else None
-    if owner and re.fullmatch(r"[A-Za-z0-9_-]{8,64}", owner):
-        return base / "owners" / owner
-    return base
-
-
 def _supplied_path(family: Family) -> Path:
-    """The handler supplied for a family: the owner's own, else the host's.
-
-    The directory the host's operator keeps is read by everyone and written
-    by nobody through the application, so an operator can provide a handler
-    for every owner by putting it there.
-    """
-    own = owner_directory() / f"{family.key}.handler"
-    shared = user_directory() / f"{family.key}.handler"
-    return own if own.is_file() or not shared.is_file() else shared
+    return user_directory() / f"{family.key}.handler"
 
 
 def _supplied_name(family: Family) -> str:
@@ -246,43 +317,78 @@ def load(family_key: str) -> bytes | None:
     return None
 
 
-def store(family_key: str, binary: bytes, name: str = "") -> dict:
-    """Keep a handler the user supplied, for every drive created from now on."""
+def store(
+    family_key: str,
+    binary: bytes,
+    name: str = "",
+    *,
+    run: Callable[..., Any] = subprocess.run,
+) -> dict:
+    """Keep a handler that was supplied, for every drive created from now on.
+
+    In a copy installed for the whole machine the handler is kept for
+    everyone who uses it, which takes an administrator's permission.
+    """
     family = FAMILIES.get(str(family_key or ""))
     if family is None:
         raise DiskError("Choose which filing system the handler is for.")
     check_handler(binary, family)
-    folder = owner_directory()
-    try:
-        folder.mkdir(parents=True, exist_ok=True)
-        target = folder / f"{family.key}.handler"
-        temporary = target.with_suffix(".tmp")
-        temporary.write_bytes(binary)
-        temporary.replace(target)
-        (folder / f"{family.key}.json").write_text(
-            json.dumps({"name": Path(str(name or family.usual_name)).name}),
-            encoding="utf-8",
-        )
-    except OSError as exc:
-        raise DiskError(
-            f"The handler could not be kept in {folder}: {exc.strerror or exc}."
-        ) from exc
+    folder = user_directory()
+    target = folder / f"{family.key}.handler"
+    details = json.dumps({"name": Path(str(name or family.usual_name)).name})
+    if _can_write(folder):
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_suffix(".tmp")
+            temporary.write_bytes(binary)
+            temporary.replace(target)
+            target.with_suffix(".json").write_text(details, encoding="utf-8")
+        except OSError as exc:
+            raise DiskError(
+                f"The handler could not be kept in {folder}: {exc.strerror or exc}."
+            ) from exc
+    else:
+        with tempfile.TemporaryDirectory(prefix="amiga-file-forge-handler-") as staging:
+            staged = [Path(staging) / target.name, Path(staging) / f"{family.key}.json"]
+            staged[0].write_bytes(binary)
+            staged[1].write_text(details, encoding="utf-8")
+            installer = shutil.which("install") or "/usr/bin/install"
+            _as_administrator(
+                [installer, "-D", "-m", "0644", "-t", str(folder), *map(str, staged)],
+                f"This copy of Amiga File Forge is installed for the whole machine, "
+                f"so its handlers are kept in {folder}, which this account cannot "
+                "write to.",
+                f"sudo install -D -m 0644 {shlex.quote(family.usual_name)} "
+                f"{shlex.quote(str(target))}",
+                run,
+            )
     return _describe(target, family, "supplied", _supplied_name(family))
 
 
-def remove(family_key: str) -> None:
-    """Forget a handler the user supplied. A shipped one is then used again."""
+def remove(family_key: str, *, run: Callable[..., Any] = subprocess.run) -> None:
+    """Forget a handler that was supplied. A shipped one is then used again."""
     family = FAMILIES.get(str(family_key or ""))
     if family is None:
         raise DiskError("There is no such filing system.")
-    target = owner_directory() / f"{family.key}.handler"
+    target = _supplied_path(family)
     if not target.is_file():
         raise DiskError(f"No {family.label} handler has been supplied.")
-    try:
-        target.unlink()
-        target.with_suffix(".json").unlink(missing_ok=True)
-    except OSError as exc:
-        raise DiskError(f"The handler could not be removed: {exc.strerror or exc}.") from exc
+    if os.access(target.parent, os.W_OK | os.X_OK):
+        try:
+            target.unlink()
+            target.with_suffix(".json").unlink(missing_ok=True)
+        except OSError as exc:
+            raise DiskError(f"The handler could not be removed: {exc.strerror or exc}.") from exc
+        return
+    remover = shutil.which("rm") or "/usr/bin/rm"
+    files = [str(target), str(target.with_suffix(".json"))]
+    _as_administrator(
+        [remover, "-f", "--", *files],
+        f"The handler is kept for the whole machine in {target.parent}, which "
+        "this account cannot write to.",
+        "sudo rm -f -- " + " ".join(shlex.quote(name) for name in files),
+        run,
+    )
 
 
 def store_from_drive(path: Path | str) -> list[dict]:
@@ -352,10 +458,11 @@ __all__ = [
     "check_handler",
     "engine_handlers",
     "family_for",
+    "install_scope",
     "load",
-    "owner_directory",
     "recognise",
     "remove",
+    "storage",
     "store",
     "store_from_drive",
     "user_directory",

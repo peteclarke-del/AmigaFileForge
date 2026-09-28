@@ -197,7 +197,10 @@ These are stated here rather than discovered later:
   edition creates and edits large drive images. Its save builds a ZIP in which
   the drive's empty space is compressed to almost nothing, but every byte of
   the drive is still read and checksummed to build it, which takes about a
-  quarter of a minute for each gigabyte of the drive's size.
+  quarter of a minute for each gigabyte of the drive's size: over half an hour
+  for a 128 GB drive. The New Image dialog says so when a drive of 2 GB or
+  more is being laid out, and saving one asks first, with the time it will
+  take, so the save can be cancelled before it starts.
 - **Other filing systems.** `SFS\2` partitions, and partitions for systems other
   than AmigaOS such as CrossDOS or UNIX, are named in the partition list but
   cannot be opened. No Smart File System handler is shipped, so a drive with
@@ -2173,13 +2176,25 @@ it is not an Amiga program, or if its own version string says it belongs to a
 different filing system. A handler you supply takes the place of the one that
 comes with the application, which is how a newer PFS3 is used.
 
-Supplied handlers are kept in the directory named by
-`AMIGA_FILE_FORGE_HANDLER_DIR`, which defaults to
-`~/.config/amiga-file-forge/handlers`. The Docker edition serves several
-people, and a handler is a program the Amiga will run, so there each browser
-keeps the handlers it supplies to itself, in a directory of its own beneath
-that one. A handler the host's operator puts in the directory itself is
-offered to everyone.
+Where a supplied handler is kept follows how the application was installed:
+
+| Installation | Handlers are kept | For |
+|---|---|---|
+| For one person, from a checkout with the user-local installer | `~/.config/amiga-file-forge/handlers` | That person |
+| For the whole machine, from the Debian or RPM package | `/var/lib/amiga-file-forge/handlers` | Everyone who uses that machine |
+| The Docker service | `/app/work/handlers`, in the working volume | Everyone who uses that service |
+
+A copy inside somebody's home directory, or one that the person running it
+owns, is theirs. Anything else was installed for everyone. Keeping a handler
+for the whole machine takes an administrator's permission, so the desktop
+application asks for a password the way its own update does, and says what to
+run in a terminal if the prompt is dismissed or `pkexec` is missing. The
+handlers dialog says which kind of installation it is and where its handlers
+go.
+
+`AMIGA_FILE_FORGE_HANDLER_DIR` names another directory, and
+`AMIGA_FILE_FORGE_INSTALL_SCOPE`, set to `user` or `machine`, settles the
+question for an installation that cannot be told apart.
 
 ### Changing the partitions of a drive
 
@@ -2540,6 +2555,7 @@ services:
       - "8668:8668"
     environment:
       AMIGA_FILE_FORGE_WORK_DIR: /app/work
+      AMIGA_FILE_FORGE_HANDLER_DIR: /app/work/handlers
       AMIGA_MAX_UPLOAD_GIB: "8"
     volumes:
       - amiga-file-forge-work:/app/work
@@ -2553,10 +2569,9 @@ networks:
 ```
 
 `AMIGA_FILE_FORGE_WORK_DIR` selects the private server-side working directory.
-`AMIGA_FILE_FORGE_HANDLER_DIR` selects where the filing-system handlers you
-supply are kept, and defaults to `~/.config/amiga-file-forge/handlers`. In a
-container, point it into the working volume so that a supplied handler
-survives the container being replaced.
+`AMIGA_FILE_FORGE_HANDLER_DIR` selects where supplied filing-system handlers
+are kept. The Compose file points it into the working volume, so that a handler
+supplied to the service is still there when the container is replaced.
 The Compose service, image, container, volume and network all use explicit
 Amiga File Forge names, so they remain consistent regardless of the checkout
 directory name.

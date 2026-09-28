@@ -4667,8 +4667,48 @@ function applySavedImageSummary(image) {
 //: the empty space included.
 const LARGE_DRIVE_IMAGE = 2 * 1024 * 1024 * 1024;
 
+//: How long the browser's save takes for each gigabyte a drive describes.
+//: Every byte is read, checksummed and compressed to build the download,
+//: the empty space included, and that is what this measures.
+const BROWSER_SAVE_SECONDS_PER_GIB = 16;
+
+function browserSaveEstimate(bytes) {
+  const minutes = bytes / (1024 ** 3) * BROWSER_SAVE_SECONDS_PER_GIB / 60;
+  if (minutes < 1.5) return "about a minute";
+  if (minutes < 90) return `about ${Math.round(minutes)} minutes`;
+  const hours = minutes / 60;
+  return `about ${hours < 10 ? hours.toFixed(1).replace(/\.0$/, "") : Math.round(hours)} hours`;
+}
+
+//: Whether saving goes through the browser, which has no way to receive a
+//: drive without reading all of it, rather than straight to a file.
+function savesThroughBrowser() {
+  return !hasHostCapability("native-file-chooser");
+}
+
+function readDriveSize(text) {
+  const match = /^\s*([0-9]+(?:[.,][0-9]+)?)\s*([kmgt]?)(i?b)?\s*$/i.exec(String(text || ""));
+  if (!match) return 0;
+  const unit = match[2].toLowerCase();
+  if (!unit && !match[3]) return Number(match[1]);
+  return Number(match[1].replace(",", ".")) * 1024 ** " kmgt".indexOf(unit || " ");
+}
+
 async function saveImage(index) {
   const pane = panes[index];
+  if (
+    savesThroughBrowser()
+    && (pane.image.kind === "hdf" || pane.image.hardDisk)
+    && pane.image.size >= LARGE_DRIVE_IMAGE
+    && !await confirmChoice(
+      "Save this large drive?",
+      `${pane.image.name} describes a drive of ${humanSize(pane.image.size)}. To build the download every byte of the drive is read and checked, the empty space included, which will take ${browserSaveEstimate(pane.image.size)} here.`,
+      {
+        confirmLabel: "Save anyway",
+        note: "The download itself is small, because the empty space is compressed to almost nothing, and the save can be stopped while it runs. The Linux desktop application saves a drive of any size at once, and writes it to a card, without reading its empty space.",
+      },
+    )
+  ) return false;
   if (
     !modal.open
     && hasHostCapability("native-file-chooser")
@@ -5284,7 +5324,9 @@ async function showHandlerManager(index) {
     <ul class="handler-list">${rows}</ul>
     <input type="file" class="handler-file" hidden>
     ${canTake ? `<div class="help-note">A drive prepared on an Amiga carries the very handlers its partitions were formatted with. <button type="button" class="button ghost" data-handler-take>Take the handlers from ${esc(pane.image.name)}</button></div>` : ""}
-    <div class="help-note">Supplied handlers are kept in <code>${esc(data.folder)}</code>. A handler is the program the Amiga keeps in <code>L:</code>, not the archive it was distributed in.</div>
+    <div class="help-note">${data.storage.scope === "machine"
+      ? `<strong>This copy of Amiga File Forge is installed for the whole machine,</strong> so a handler supplied here is kept for everyone who uses it, in <code>${esc(data.storage.folder)}</code>.${data.storage.writable ? "" : data.storage.asksForPassword ? " Keeping or removing one asks for an administrator's password." : " This account cannot write there, so keeping or removing one is refused with the command an administrator can run instead."}`
+      : `<strong>This copy of Amiga File Forge is installed for you alone,</strong> so a handler supplied here is kept for you, in <code>${esc(data.storage.folder)}</code>.`} A handler is the program the Amiga keeps in <code>L:</code>, not the archive it was distributed in.</div>
     <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div>
     </div>`, async () => true);
   const reopen = () => showHandlerManager(index);
@@ -6125,6 +6167,7 @@ async function showCreateImageModal(preferredIndex = null, options = {}) {
       <optgroup label="By the size on the label">${layoutChoices.cardSizes.map(card => `<option value="${Number(card.sizeBytes)}">${esc(card.label)} · ${esc(humanSize(card.sizeBytes))}</option>`).join("")}</optgroup>
     </select><small>A card holds less than its label says, because its maker counts in thousands: a 128 GB card is about 119 GiB. An image sized from this list fits the card, and the little that is left over can be claimed once the image is on it.</small></div>
     <div class="field bare-filesystem" hidden><label>Filing system</label><select name="bareFilesystem"></select><small data-bare-help></small></div>
+    <div class="help-warning browser-save-note" hidden></div>
     <div class="drive-layout-host" hidden>${driveLayout.editorMarkup(layoutChoices)}</div>` : ""}
     <div class="field"><label>Target hardware</label><select name="targetHardware">
       <option value="auto">Auto / inspect only</option>
@@ -6218,15 +6261,29 @@ async function showCreateImageModal(preferredIndex = null, options = {}) {
       if (isPartitioned()) createButton.disabled = !state.valid;
     },
   }) : null;
+  const browserSaveNote = modalContent.querySelector(".browser-save-note");
+  const updateBrowserSaveNote = () => {
+    if (!browserSaveNote) return;
+    const size = readDriveSize(capacity.value);
+    const applies = savesThroughBrowser()
+      && ["hardfile", "ffs-hard", "ffs-physical"].includes(format.value)
+      && size >= LARGE_DRIVE_IMAGE;
+    browserSaveNote.hidden = !applies;
+    if (applies) {
+      browserSaveNote.innerHTML = `<strong>Saving a drive this size from the browser is slow.</strong> Creating it and working in it are as quick as on any drive, but saving reads every byte of the drive to build the download, which will take ${esc(browserSaveEstimate(size))} for ${esc(humanSize(size))}. You will be asked again before a save starts. The Linux desktop application saves and writes a drive of any size at once.`;
+    }
+  };
   capacity.addEventListener("input", () => {
     if (cardSize) cardSize.value = "";
     if (isPartitioned()) layoutEditor.recheck();
+    updateBrowserSaveNote();
   });
   cardSize?.addEventListener("change", () => {
     if (!cardSize.value) return;
     // Whole mebibytes, which is what a partition table can describe and
     // what reads back as the same number when it is typed again.
     capacity.value = `${Math.floor(Number(cardSize.value) / (1024 * 1024))}MB`;
+    updateBrowserSaveNote();
     if (isPartitioned()) layoutEditor.reapplyPreset().then(() => layoutEditor.recheck());
   });
   bareFilesystem?.addEventListener("change", () => {
@@ -6303,6 +6360,7 @@ async function showCreateImageModal(preferredIndex = null, options = {}) {
       createButton.disabled = partitioned && !layoutEditor.state.valid;
       if (partitioned) layoutEditor.recheck();
     }
+    updateBrowserSaveNote();
 
     const hasTitle = profile.hasTitle !== false;
     title.disabled = !hasTitle;

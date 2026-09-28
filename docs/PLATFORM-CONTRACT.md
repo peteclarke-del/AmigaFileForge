@@ -98,11 +98,18 @@ host belongs to `native-file-chooser`. The web host saves through the browser,
 which has no way to receive a file that is mostly empty space without
 receiving the empty space.
 
-In the web host, a handler someone supplies is kept for that browser owner
-alone. A handler is a program the Amiga will run, and a drive made by one
-person must not carry a program that another person chose. The desktop host
-has one owner and keeps supplied handlers in the directory its documentation
-names.
+Where a supplied handler is kept follows how the application was installed,
+and is the same rule in both hosts: a copy installed for one person keeps it
+for that person, and a copy installed for the whole machine, which the Docker
+service always is, keeps it for everyone who uses that copy. What differs is
+who may be asked for an administrator's password when the machine-wide
+directory is not writable. The desktop host asks through `pkexec`, because it
+runs in the session of the person at the machine. The web host never does,
+because the person pressing the button may be on another computer, and says
+what an administrator can run instead.
+
+Saving a large drive is where the hosts differ most for the person using them.
+The web host says how long its save will take and asks before it starts.
 
 ## Storage and security
 

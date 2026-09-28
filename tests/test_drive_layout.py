@@ -273,33 +273,118 @@ class HandlerStoreTests(HandlerStoreFixture):
             filesystem_handlers.store("ext4", SFS)
         self.assertIsNone(filesystem_handlers.load("sfs"))
 
-    def test_in_the_web_host_each_owner_keeps_handlers_of_their_own(self) -> None:
-        """A handler is a program the Amiga runs, so nobody chooses one for anybody else."""
-        from app.image_session import SESSION_OWNER
+    def test_where_handlers_are_kept_follows_how_the_application_was_installed(self) -> None:
+        home = self.folder / "home" / "someone"
+        checkout = home / "Projects" / "AmigaFileForge"
+        package = self.folder / "opt" / "amiga-file-forge"
+        for folder in (checkout, package):
+            folder.mkdir(parents=True)
+        with patch.dict(os.environ, {"AMIGA_FILE_FORGE_INSTALL_SCOPE": ""}), patch.object(
+            Path, "home", return_value=home
+        ):
+            self.assertEqual(filesystem_handlers.install_scope(checkout), "user")
+            # A copy outside the home directory that belongs to root was put
+            # there for everyone.
+            with patch("app.filesystem_handlers.os.getuid", return_value=1000), patch.object(
+                Path, "stat", return_value=os.stat_result((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+            ):
+                self.assertEqual(filesystem_handlers.install_scope(package), "machine")
+            # The Docker service runs as root in a copy root owns.
+            with patch("app.filesystem_handlers.os.getuid", return_value=0):
+                self.assertEqual(filesystem_handlers.install_scope(package), "machine")
+            # A checkout somewhere else that the person owns is still theirs.
+            self.assertEqual(filesystem_handlers.install_scope(package), "user")
 
-        flag = patch.object(filesystem_handlers, "PER_OWNER", True)
-        flag.start()
-        self.addCleanup(flag.stop)
-        first = SESSION_OWNER.set("a" * 32)
-        try:
-            filesystem_handlers.store("sfs", SFS)
-            self.assertEqual(filesystem_handlers.load("sfs"), SFS)
-        finally:
-            SESSION_OWNER.reset(first)
-        second = SESSION_OWNER.set("b" * 32)
-        try:
-            self.assertIsNone(filesystem_handlers.load("sfs"))
-            rows = {row["family"]: row for row in filesystem_handlers.available()}
-            self.assertEqual(rows["sfs"]["source"], "missing")
-            self.assertEqual(rows["pfs3"]["source"], "bundled")
-            with self.assertRaises(DiskError):
-                filesystem_handlers.remove("sfs")
-            # What the host's operator provides is there for everyone.
-            shared = filesystem_handlers.user_directory()
-            (shared / "sfs.handler").write_bytes(SFS)
-            self.assertEqual(filesystem_handlers.load("sfs"), SFS)
-        finally:
-            SESSION_OWNER.reset(second)
+        with patch.dict(os.environ, {"AMIGA_FILE_FORGE_HANDLER_DIR": ""}), patch.object(
+            Path, "home", return_value=home
+        ):
+            with patch.dict(os.environ, {"AMIGA_FILE_FORGE_INSTALL_SCOPE": "user"}):
+                self.assertEqual(
+                    filesystem_handlers.user_directory(),
+                    home / ".config" / "amiga-file-forge" / "handlers",
+                )
+            with patch.dict(os.environ, {"AMIGA_FILE_FORGE_INSTALL_SCOPE": "machine"}):
+                self.assertEqual(
+                    filesystem_handlers.user_directory(),
+                    Path("/var/lib/amiga-file-forge/handlers"),
+                )
+                self.assertEqual(filesystem_handlers.storage()["scope"], "machine")
+
+    def machine_store(self):
+        """A machine-wide directory this account cannot write to."""
+        folder = self.folder / "machine" / "handlers"
+        folder.parent.mkdir()
+        environment = patch.dict(os.environ, {
+            "AMIGA_FILE_FORGE_HANDLER_DIR": str(folder),
+            "AMIGA_FILE_FORGE_INSTALL_SCOPE": "machine",
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+        locked = patch("app.filesystem_handlers._can_write", return_value=False)
+        locked.start()
+        self.addCleanup(locked.stop)
+        tool = patch("app.filesystem_handlers.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+        tool.start()
+        self.addCleanup(tool.stop)
+        return folder
+
+    def test_a_machine_wide_handler_is_kept_with_an_administrators_permission(self) -> None:
+        from types import SimpleNamespace
+
+        folder = self.machine_store()
+        commands = []
+
+        def administrator(command, **_options):
+            commands.append(command)
+            # What install -D -t does once the password has been given.
+            folder.mkdir(parents=True, exist_ok=True)
+            for source in command[7:]:
+                (folder / Path(source).name).write_bytes(Path(source).read_bytes())
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(filesystem_handlers, "MAY_ASK_FOR_PASSWORD", True):
+            self.assertTrue(filesystem_handlers.storage()["asksForPassword"])
+            kept = filesystem_handlers.store("sfs", SFS, "SmartFilesystem", run=administrator)
+
+        self.assertEqual(commands[0][:7], [
+            "/usr/bin/pkexec", "/usr/bin/install", "-D", "-m", "0644", "-t", str(folder),
+        ])
+        self.assertEqual(kept["source"], "supplied")
+        self.assertEqual(kept["name"], "SmartFilesystem")
+        self.assertEqual(filesystem_handlers.load("sfs"), SFS)
+
+    def test_a_dismissed_or_refused_password_keeps_nothing_and_says_what_to_run(self) -> None:
+        from types import SimpleNamespace
+
+        folder = self.machine_store()
+        with patch.object(filesystem_handlers, "MAY_ASK_FOR_PASSWORD", True):
+            with self.assertRaises(DiskError) as raised:
+                filesystem_handlers.store(
+                    "sfs", SFS, run=lambda *_a, **_k: SimpleNamespace(returncode=126, stdout="", stderr="")
+                )
+            self.assertIn("dismissed", str(raised.exception))
+            with self.assertRaises(DiskError) as raised:
+                filesystem_handlers.store(
+                    "sfs", SFS, run=lambda *_a, **_k: SimpleNamespace(returncode=127, stdout="", stderr="")
+                )
+            self.assertIn("sudo install", str(raised.exception))
+        self.assertFalse(folder.exists())
+
+    def test_the_web_host_never_asks_for_a_password(self) -> None:
+        """The person pressing the button may be on another computer."""
+        self.machine_store()
+
+        def never(*_arguments, **_options):
+            raise AssertionError("the web host must not run pkexec")
+
+        # The flag is the host's, set when the application is created, so it
+        # is set here rather than left as another test's host left it.
+        with patch.object(filesystem_handlers, "MAY_ASK_FOR_PASSWORD", False):
+            self.assertFalse(filesystem_handlers.storage()["asksForPassword"])
+            with self.assertRaises(DiskError) as raised:
+                filesystem_handlers.store("sfs", SFS, run=never)
+        self.assertIn("installed for the whole machine", str(raised.exception))
+        self.assertIn("sudo install", str(raised.exception))
 
     def test_handlers_are_taken_from_a_drive_that_carries_them(self) -> None:
         from amiganut.filesystem.drive import create_drive, make_handler

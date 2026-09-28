@@ -96,9 +96,10 @@ def create_app(
     application.config["MAX_CONTENT_LENGTH"] = max_upload_gib * 1024 * 1024 * 1024
     application.config["AMIGA_PLATFORM"] = runtime.public_contract()
     service = DiskService(active_work_dir)
-    # The web host serves several people, each of whom keeps the handlers
-    # they supply to themselves.
-    filesystem_handlers.PER_OWNER = runtime.kind == "web"
+    # Keeping a handler for the whole machine takes an administrator's
+    # password, and only the desktop host is in the session of the person at
+    # the machine to ask for it.
+    filesystem_handlers.MAY_ASK_FOR_PASSWORD = runtime.kind == "desktop"
     operations = OperationRegistry(active_work_dir / "operations.json")
     # Reading or writing a floppy disk counts as activity an application
     # update and a restart must wait for. Only the desktop host installs, and

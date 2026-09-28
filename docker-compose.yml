@@ -12,6 +12,9 @@ services:
       - "${AMIGA_FILE_FORGE_VNC_PORT:-8675}:8668"
     environment:
       AMIGA_FILE_FORGE_WORK_DIR: /app/work
+      # Kept in the working volume so that a handler supplied to the service
+      # is still there when the container is replaced.
+      AMIGA_FILE_FORGE_HANDLER_DIR: /app/work/handlers
       AMIGA_MAX_UPLOAD_GIB: "8"
     volumes:
       - amiga-file-forge-work:/app/work
