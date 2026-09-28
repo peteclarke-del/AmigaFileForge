@@ -293,7 +293,10 @@ class HandlerStoreTests(HandlerStoreFixture):
             with patch("app.filesystem_handlers.os.getuid", return_value=0):
                 self.assertEqual(filesystem_handlers.install_scope(package), "machine")
             # A checkout somewhere else that the person owns is still theirs.
-            self.assertEqual(filesystem_handlers.install_scope(package), "user")
+            with patch("app.filesystem_handlers.os.getuid", return_value=1000), patch.object(
+                Path, "stat", return_value=os.stat_result((0o40755, 0, 0, 1, 1000, 1000, 0, 0, 0, 0))
+            ):
+                self.assertEqual(filesystem_handlers.install_scope(package), "user")
 
         with patch.dict(os.environ, {"AMIGA_FILE_FORGE_HANDLER_DIR": ""}), patch.object(
             Path, "home", return_value=home
