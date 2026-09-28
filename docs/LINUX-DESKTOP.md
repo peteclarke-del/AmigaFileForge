@@ -301,6 +301,10 @@ The same dialog saves one partition on its own, as a hardfile with its `.geo`,
 and saves a volume that has no partition table as a drive that has one, with
 the handler it needs.
 
+The web edition has neither of these commands. Its save reads every byte of
+the drive to build the download, so it says how long that will take and asks
+before it starts.
+
 A sparse file stays small on ext4, XFS and Btrfs. Copying it to a filing system
 or a service that does not keep empty space empty makes it take its full size.
 

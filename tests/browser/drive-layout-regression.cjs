@@ -59,6 +59,17 @@ const target = process.env.AMIGA_FILE_FORGE_URL || "http://127.0.0.1:8666";
 
     await page.locator('tr[data-layout-row="1"] select[data-field="filesystem"]').selectOption("pds3");
     await page.waitForFunction(() => !document.querySelector('button[value="create"]').disabled);
+
+    // The browser's save reads every byte of a drive, so a large one says so
+    // while it is laid out, and a small one does not.
+    const slow = page.locator(".browser-save-note");
+    expect(await slow.isVisible(), "A 128 GB drive must warn that saving it is slow.");
+    expect(/minutes|hours/.test(await slow.innerText()), "The warning must give the time.");
+    await page.fill('input[name="capacity"]', "512MB");
+    await page.waitForFunction(() => document.querySelector(".browser-save-note").hidden);
+    await page.fill('input[name="capacity"]', "128GB");
+    await page.waitForFunction(() => !document.querySelector(".browser-save-note").hidden);
+    await page.waitForFunction(() => !document.querySelector('button[value="create"]').disabled);
     await page.fill('input[name="title"]', "Browser128");
     await create.click();
     await page.waitForSelector(".partition-list", { timeout: 30000 });
@@ -104,6 +115,23 @@ const target = process.env.AMIGA_FILE_FORGE_URL || "http://127.0.0.1:8666";
     expect(layout.layout.partitions.length === 2, "The drive has two partitions again.");
     expect(layout.layout.missingHandlers.length === 0, "Every partition has its handler.");
     expect(layout.image.size === 128 * 1024 ** 3, "The image is the size of the drive.");
+
+    // Saving asks first, with the time it will take, and cancelling saves nothing.
+    if (await page.locator("dialog[open] .modal-close").count()) {
+      await page.locator("dialog[open] .modal-close").click();
+      await settle();
+    }
+    let prepared = 0;
+    page.on("request", request => {
+      if (request.url().includes("/download/prepare")) prepared += 1;
+    });
+    await pane.locator(".save-image").click();
+    await page.waitForSelector('[data-choice="confirm"]');
+    const question = await page.locator(".overlay-dialog").innerText();
+    expect(/128\.0 GB/.test(question) && /minutes/.test(question), `The question must give the size and the time: ${question}`);
+    await page.locator('[data-choice="cancel"]').click();
+    await settle();
+    expect(prepared === 0, "Cancelling must not start the save.");
     expect(problems.length === 0, `The page reported errors: ${problems.join("; ")}`);
     console.log("Drive layout regression passed.");
   } finally {

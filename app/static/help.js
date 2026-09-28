@@ -459,6 +459,7 @@ function showHelp() {
               </ol>
             </div>
             <div class="help-note"><strong>Which filing system:</strong> FFS is kept to 4 GB for one partition, because it is slow to validate and easy to damage past that and the FastFileSystem in a Kickstart 3.1 ROM cannot reach further. Use the Professional File System for anything larger. <code>PFS\\3</code> suits a machine whose device driver reaches the whole drive: AmigaOS 3.1.4 or later, a PiStorm, an accelerator with its own driver, or an emulator. <code>PDS\\3</code> is the same filing system talking to the drive directly, which is how a machine with the Kickstart 3.1 <code>scsi.device</code> reaches a partition past the first 4 GB. The Smart File System stops at 127 GB for one partition.</div>
+            <div class="help-warning"><strong>Saving a large drive from the browser is slow:</strong> the browser edition reads every byte of a drive to build the download, the empty space included, at about a quarter of a minute for each gigabyte of the drive's size. That is over half an hour for a 128 GB drive. The New Image dialog says so for a drive of 2 GB or more, and <strong>Save image</strong> asks first, with the time it will take, so you can cancel. Creating the drive and working in it are as quick as on any other. The Linux desktop application saves a drive of any size at once.</div>
             <div class="help-note"><strong>A large drive takes little room:</strong> a drive image reports the size of the drive it describes and occupies only what has been put in it. A new 128 GB drive takes a few megabytes on this machine, and about 40 MB once Workbench is installed.</div>
             <div class="help-task">
               <h4>Filing-system handlers</h4>
@@ -468,6 +469,7 @@ function showHelp() {
                 <li>For the Smart File System, or the FastFileSystem that long filenames need, choose <strong>Tools → Filing-system handlers…</strong> and then <strong>Supply…</strong>. The handler is the program the Amiga keeps in <code>L:</code>, such as <code>SmartFilesystem</code>, not the archive it was distributed in. The partition editor offers the same button when a layout needs a handler you have not supplied.</li>
                 <li>A card prepared on an Amiga carries the handlers its partitions were formatted with. Open it and choose <strong>Take the handlers from this drive</strong>.</li>
                 <li>A handler you supply takes the place of the one that comes with Amiga File Forge, which is how a newer PFS3 is used. <strong>Remove</strong> goes back to the one that came with it.</li>
+                <li>Where a supplied handler is kept follows how Amiga File Forge was installed. A copy installed for you alone keeps it for you. A copy installed for the whole machine, from a package or as the Docker service, keeps it for everyone who uses that copy, and the desktop application asks for an administrator's password to do so. The dialog says which applies.</li>
               </ol>
             </div>
             <div class="help-task">

@@ -44,7 +44,8 @@ def create_drives_blueprint(
     def list_handlers():
         return jsonify(
             handlers=filesystem_handlers.available(),
-            folder=str(filesystem_handlers.owner_directory()),
+            folder=str(filesystem_handlers.user_directory()),
+            storage=filesystem_handlers.storage(),
         )
 
     @blueprint.post("/api/filesystem-handlers")

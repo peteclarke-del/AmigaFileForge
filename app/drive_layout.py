@@ -521,6 +521,7 @@ def options(drive_bytes: int | None = None) -> dict:
         ],
         "cardSizes": card_sizes(),
         "handlers": filesystem_handlers.available(),
+        "handlerStorage": filesystem_handlers.storage(),
         "limits": {
             "smallestDrive": SMALLEST_DRIVE,
             "largestDrive": LARGEST_DRIVE,
