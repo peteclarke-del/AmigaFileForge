@@ -73,7 +73,7 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./amiga-file-forge_1.7.1-1.deb13_amd64.deb
+sudo apt install ./amiga-file-forge_1.8.0-1.deb13_amd64.deb
 amiga-file-forge
 ```
 
@@ -137,7 +137,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current release is `1.7.1`. It provides the editing and transfer workflows
+The current release is `1.8.0`. It provides the editing and transfer workflows
 described in this guide, including movable, resizable and stackable panes, undo
 and named checkpoints, owner-isolated recovery, background job tracking,
 Rigid Disk Block partition maintenance, hard drives of up to 2 TB with a
@@ -2750,13 +2750,22 @@ Backend routes are split by responsibility:
 - `app/dms_disk_service.py` owns cached DMS access and DMS-to-ADF conversion.
 - `app/dms_codec.py` decodes every DiskMasher compression mode in-tree, ported
   from the public-domain xDMS 1.3 reference and pinned to its exact output.
-- `app/amigaos_cd.py` recognises the AmigaOS 3.5 and 3.9 release CDs and says
-  whether a machine can run one. Neither can be installed from outside the
-  Amiga, so this checks the disc, the processor and the drive, and the
-  installation itself is left to Commodore's own script.
+- `app/amigaos_cd.py` recognises the AmigaOS 3.5 and 3.9 release CDs, says
+  whether a machine can run one, and holds the layout of each release as it
+  was read out of the Installer script on its disc.
+- `app/system_tree.py` resolves the layers of an installation by name, so
+  that each file is written once from the newest layer that supplies it.
+- `app/amigaos_cd_install.py` installs a release from its CD into the open
+  partition, with the update packs over the top.
+- `app/boingbag.py` finds the BoingBag update packs inside the archives a
+  person supplies and lays their files over the system, choosing the build of
+  each library for the processor in the hardware profile.
+- `app/boingbag_update.py` applies the packs whose fixes are in an encrypted
+  archive, by running the pack's own Updater under FS-UAE and collecting what
+  it writes.
 - `app/emergency_boot.py` builds a small boot drive from the system a release
-  CD carries, which is what starts the machine when the drive being installed
-  onto is empty.
+  CD carries, which is what starts the machine when the disc's own installer
+  is run by hand against an empty drive.
 - `app/emulator_media.py` hands a drive to the emulator as the image itself,
   in a place the emulator is allowed to read, so that what an installer writes
   there is kept.
@@ -2866,7 +2875,7 @@ curl http://localhost:8674/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"amiganut","status":"ok","version":"1.7.1"}
+{"engine":"amiganut","status":"ok","version":"1.8.0"}
 ```
 
 ## Main dependencies

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
-from .. import whdload
+from .. import boingbag, whdload
 from ..disk_service import DiskError, DiskService
 from ..install_service import (
     DEFAULT_INSTALL_PARENT,
@@ -38,6 +38,10 @@ SLAVE_UPLOAD_LIMIT = 4 * 1024 * 1024
 #: The same ceiling the downloader applies, so an archive supplied by hand and
 #: one fetched from the author's site are held to one rule.
 ARCHIVE_UPLOAD_LIMIT = whdload.DOWNLOAD_LIMIT
+
+#: The largest update pack accepted. The collection that carries BoingBags 1
+#: to 4 together is fourteen megabytes, so this leaves a wide margin.
+PACK_UPLOAD_LIMIT = 64 * 1024 * 1024
 
 
 def create_install_blueprint(service: DiskService, operations: OperationRegistry) -> Blueprint:
@@ -194,22 +198,97 @@ def create_install_blueprint(service: DiskService, operations: OperationRegistry
     @blueprint.get("/api/install/amigaos-cd/releases")
     def amigaos_cd_releases():
         """The CD releases this recognises, and what each one needs."""
-        return jsonify(releases=describe_releases(), processor=REQUIRED_PROCESSOR)
+        return jsonify(
+            releases=describe_releases(),
+            processor=REQUIRED_PROCESSOR,
+            packs=boingbag.describe_bags(),
+        )
+
+    def uploaded_packs() -> list[tuple[str, bytes]]:
+        """The update archives sent with a request, each held to the limit."""
+        packs: list[tuple[str, bytes]] = []
+        for upload in request.files.getlist("packs"):
+            if not upload.filename:
+                continue
+            data = upload.read(PACK_UPLOAD_LIMIT + 1)
+            name = Path(upload.filename).name
+            if len(data) > PACK_UPLOAD_LIMIT:
+                raise DiskError(
+                    f"{name} is larger than the "
+                    f"{PACK_UPLOAD_LIMIT // (1024 * 1024)} MB limit for an update pack."
+                )
+            if not is_lha_bytes(data):
+                raise DiskError(
+                    f"{name} is not an LHA archive. The BoingBags are published as "
+                    "LHA archives, such as BoingBag39-1.lha."
+                )
+            packs.append((name, data))
+        return packs
 
     @blueprint.post("/api/images/<image_id>/install/amigaos-cd/preflight")
     @request_effect("read-only", "checking whether a drive can take an AmigaOS CD")
     def amigaos_cd_preflight(image_id):
         """Say whether this drive, this hardware and this disc can work.
 
-        Checked before anything is launched, because every one of these is
-        knowable from the outset and the alternative is an operator watching a
-        machine boot in order to be told. Nothing here writes to anything.
+        Checked before anything is written, because every one of these is
+        knowable from the outset. Nothing here writes to anything.
         """
         data = payload()
         session = service.get(image_id)
         apply_partition(service, session, data.get("partition"))
         disc = service.get(str(data["disc"]))
         return jsonify(preflight=service.amigaos_cd_preflight(session, disc))
+
+    @blueprint.post("/api/install/amigaos-cd/packs")
+    @request_effect("read-only", "looking inside update packs")
+    def amigaos_cd_packs():
+        """Say which update packs the supplied archives hold.
+
+        One archive can hold several packs and a pack can be nested at any
+        depth, so what was found is reported by pack rather than by file, and
+        an archive that held nothing recognisable is named.
+        """
+        packs = uploaded_packs()
+        archives = boingbag.open_archives(packs)
+        found = boingbag.survey(archives)
+        holding = {row["archive"] for row in found}
+        return jsonify(
+            packs=found,
+            unrecognised=[name for name, _data in packs if name not in holding],
+        )
+
+    @blueprint.post("/api/images/<image_id>/install/amigaos-cd")
+    @image_mutation("installing AmigaOS from a release CD")
+    def install_amigaos_cd(image_id):
+        """Install the release on a CD into this volume, with its update packs.
+
+        The installation is made here and written into the drive. When this
+        returns the drive holds the system, and nothing is left to be finished
+        inside an emulator.
+        """
+        session = service.get(image_id)
+        form = request.form
+        apply_partition(service, session, form.get("partition"))
+        disc = service.get(str(form.get("disc") or ""))
+        chosen = [key for key in str(form.get("chosenPacks") or "").split(",") if key]
+        packs = uploaded_packs() if form.get("withPacks", "true") != "false" else []
+        if packs and not chosen and form.get("chosenPacks") is not None:
+            # Every pack was unticked, which is a choice and not an omission.
+            packs = []
+        with operations.tracked(
+            form.get("operationId"),
+            "Installing AmigaOS",
+            "AmigaOS installed",
+        ) as progress:
+            result = service.install_amigaos_cd(
+                session,
+                disc,
+                packs=packs,
+                chosen_packs=chosen,
+                use_emulator=form.get("useEmulator", "true") != "false",
+                progress=progress,
+            )
+        return jsonify(image=service.summary(session), amigaos=result)
 
     # ------------------------------------------------------------------
     # WHDLoad

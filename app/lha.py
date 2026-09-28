@@ -64,6 +64,8 @@ class LHAMember:
     crc: int | None
     offset: int
     is_directory: bool
+    #: The Amiga file comment, which LhA on the Amiga stores after the name.
+    comment: str = ""
 
     @property
     def name(self) -> str:
@@ -83,6 +85,19 @@ def _crc16(data: bytes) -> int:
 def _decode_text(raw: bytes) -> str:
     """Amiga archives are Latin-1; never fail a listing over one odd byte."""
     return raw.decode("latin-1").rstrip("\x00")
+
+
+def _split_comment(path: str) -> tuple[str, str]:
+    """Separate a name from the Amiga file comment stored behind it.
+
+    LhA on the Amiga keeps a file's comment in the name field, after a zero
+    byte. A browser cache holds files whose comment is the address they were
+    fetched from, so a comment can contain a colon and slashes, and reading it
+    as part of the name turns an ordinary file into what looks like an
+    absolute path.
+    """
+    name, _separator, comment = path.partition("\x00")
+    return name, comment.replace("\x00", "")
 
 
 def _normalise(path: str) -> str:
@@ -187,6 +202,7 @@ def _read_header(data: bytes, offset: int) -> tuple[LHAMember | None, int]:
 
     if payload + packed > len(data):
         raise LHAError(f"{path or 'An entry'} is truncated: the archive ends before its data does.")
+    path, comment = _split_comment(path)
     directory_entry = method in EMPTY_METHODS or path.endswith("/")
     member = LHAMember(
         path=_normalise(path),
@@ -196,6 +212,7 @@ def _read_header(data: bytes, offset: int) -> tuple[LHAMember | None, int]:
         crc=crc,
         offset=payload,
         is_directory=directory_entry,
+        comment=comment,
     )
     return member, payload + packed
 
