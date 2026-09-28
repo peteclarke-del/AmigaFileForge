@@ -62,6 +62,30 @@ class RouteEffectTests(unittest.TestCase):
         )
         self.assertEqual(missing, [])
 
+    @unittest.skipIf(create_app is None, "Flask is available in the application container")
+    def test_every_undo_point_has_a_name_the_checkpoint_store_accepts(self) -> None:
+        """A reason too long to name a checkpoint fails the request it belongs to.
+
+        The undo point is taken before the route runs and is named after the
+        route's reason, so a reason a few characters too long refuses every
+        request to that route, whatever it was asked to do.
+        """
+        from app.checkpoints import CHECKPOINT_NAME_LIMIT
+
+        with tempfile.TemporaryDirectory() as folder, patch(
+            "app.server.WORK_DIR", Path(folder)
+        ):
+            application = create_app(
+                platform="desktop", desktop_token="t" * 40, desktop_owner="o" * 40
+            )
+        too_long = sorted(
+            f"{endpoint}: {mutation.reason}"
+            for endpoint, view in application.view_functions.items()
+            if (mutation := mutation_for(view)) is not None
+            and len(f"Before {mutation.reason}") > CHECKPOINT_NAME_LIMIT
+        )
+        self.assertEqual(too_long, [])
+
         transfers = {"files.transfer", "files.transfer_image_to_directory"}
         for endpoint in transfers:
             self.assertEqual(

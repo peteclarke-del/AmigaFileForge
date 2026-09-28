@@ -94,9 +94,9 @@ These two releases are not installed the way 3.1 is, and it is worth being
 plain about why. There is no tree to copy. The disc carries a Commodore
 Installer script of two hundred kilobytes that runs on the Amiga, reads the
 versions of the libraries the live system has loaded, asks a great many
-questions and patches an existing installation in place. Its own words are
-that "Pretend mode cannot be used with this installation script", and 3.9
-refuses outright unless it finds an earlier release to update.
+questions and writes the system where it is told to. Its own words are that
+"Pretend mode cannot be used with this installation script". The 3.9 script
+offers an update over 3.5 and a "full installation over OS3.0 or empty HD".
 
 So Amiga File Forge does not install them. What it does is everything up to
 that point, which is the part that otherwise costs an afternoon to discover.
@@ -116,38 +116,67 @@ Three things are checked before anything starts:
   68020, 68030, 68040 or 68060 accelerator, or a PiStorm. A stock A500 or A600
   cannot run either release, and is told so rather than left to find out from
   a machine that will not start.
-- **The drive.** Both releases update a system rather than creating one, so a
-  volume with no `S:Startup-Sequence` has nothing for them to update. Install
-  Workbench 3.1 onto it first, which this application can do.
+- **The drive.** The installer runs on the Amiga, so something has to start
+  the machine. A drive with a system on it starts itself. An empty drive is
+  started from the system the disc carries, described below. Only an empty
+  drive and a disc with no such system leave nothing to be done but install
+  Workbench 3.1 first, and the dialog offers to do that.
 
-Every blocking reason is reported at once rather than one at a time, because
-fixing one and running again is exactly the slow loop the check exists to
-avoid.
+The dialog reports the disc and the drive separately. A disc that is
+recognised is said to be fine, so that a drive which is not ready does not
+read as a disc that failed. Every blocking reason is reported at once rather
+than one at a time, because fixing one and running again is exactly the slow
+loop the check exists to avoid.
 
 When all three are in order, **Boot with the CD** starts the machine with the
-drive booting and the disc in the CD drive, which is the state the installer
-expects. Open the disc on the Workbench and run its installation icon; it will
-ask where to install and what to include.
+disc in the CD drive. Open the disc on the Workbench and run its installation
+icon; it will ask where to install and what to include. Close the emulator when
+the installer has finished.
 
-### Making the disc visible
+### Installing onto an empty drive
 
-A stock Workbench 3.1 installation has everything needed to read a CD and none
-of it switched on, which is worth knowing because the symptom is a machine that
-boots perfectly and shows no disc at all.
+A newly partitioned drive has nothing on it to start a machine from. Both
+discs carry a complete system in a drawer called `Emergency-Boot`, which is
+what the installer means when it says to "boot from your Emergency-Disk to
+make the update or full installation".
 
-The Extras disk puts the CD filing system in `L:`, and the Storage disk puts
-the `CD0` mountlist in `Storage/DOSDrivers`, which is the drawer Workbench keeps
-things in until they are wanted. AmigaDOS reads only `Devs/DOSDrivers`, so the
-driver is present and inactive.
+The machine is started from that system. It is copied onto a small drive of
+its own and attached beside the drive being installed onto, with a higher boot
+priority, because an emulated A1200 does not boot from its CD drive. The lines
+of its startup that expect the emergency floppy in `DF0:` are commented out,
+since each would stop the boot with a requester asking for the disk. In the
+installer, choose the full installation and give it the empty partition.
 
-Booting with a CD activates it. The mountlist is copied into
-`Devs/DOSDrivers/CD0`, and because Commodore leaves its `Device` and `Unit`
-lines commented out and takes them from tooltypes on the `CD0` icon, defaulting
-to a real SCSI drive at unit 2, those two lines are written into the mountlist
-itself. That is the form the file's own comment documents.
+Nothing from the emergency system is put on your drive. The installer decides
+what goes there, and the small drive is discarded when the emulator closes.
 
-This writes to the image, so it takes an undo checkpoint like any other write,
-and it is reported before it happens rather than done silently.
+### What the emulator is given
+
+The emulator is given the drive in the pane itself, not a copy, so what the
+installer writes is on the drive when the emulator closes. An undo point is
+taken before the machine starts, and **Edit -> Undo last change** afterwards
+puts the drive back as it was. While the emulator is running the drive cannot
+be changed from the workbench, because two programs writing to one drive
+corrupt it.
+
+FS-UAE installed as a snap cannot read the hidden folder the workbench keeps
+its images in. The drive and the disc are given to it under a second name in
+`~/snap/fsuae/common/amiga-file-forge`, which it can read. That is a hard link
+and not a copy, so a drive of a hundred gigabytes is handed over at once. Where
+a hard link cannot be made, because the two folders are on different disks, the
+drive is copied without its empty space and copied back afterwards.
+
+### The disc is visible without a driver
+
+The emulator mounts the disc as `CD0:` itself, before AmigaDOS starts, so the
+machine sees it whether or not the drive has a CD driver of its own. Nothing is
+written to the drive to prepare it. Earlier releases copied a `CD0` mountlist
+into `Devs/DOSDrivers` that named the emulator's own CD device, which would
+have been wrong on the real machine the drive is for.
+
+A real machine still needs a driver to read a CD. A stock Workbench 3.1 has the
+filing system in `L:` and the `CD0` mountlist parked in `Storage/DOSDrivers`,
+and the dialog says when the drive has none switched on.
 
 The device it points at, `uaescsi.device` unit 0, is what FS-UAE presents a CD
 on for a machine that has no CD drive of its own. If a disc still does not

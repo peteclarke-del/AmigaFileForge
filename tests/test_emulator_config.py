@@ -265,7 +265,13 @@ class EmulatorRouteTests(unittest.TestCase):
         self.assertEqual(result["machine"], "a1200")
 
     def test_a_drive_run_attaches_the_whole_drive(self):
-        """A hard drive is handed to the emulator entire, not partition by partition."""
+        """A hard drive is handed to the emulator entire, and as itself.
+
+        It used to be wrapped in a FAT32 card image first, which an emulator
+        cannot boot and which was thrown away afterwards. A run to look at a
+        drive attaches the image read-only, so nothing the machine does is
+        written to it.
+        """
         with tempfile.TemporaryDirectory() as temporary:
             service = DiskService(temporary)
             drive = service.create_blank("ffs-hard", "Collection", capacity="4MB")
@@ -273,6 +279,8 @@ class EmulatorRouteTests(unittest.TestCase):
             app.register_blueprint(create_tools_blueprint(service, OperationRegistry()))
             with patch("app.routes.tools.run_emulator_process") as run, patch(
                 "app.emulator_config.Path.is_file", return_value=True
+            ), patch(
+                "app.emulator_media.is_confined", return_value=False
             ), _kickstart(Path("/roms/kick13.rom")):
                 run.return_value = SimpleNamespace(returncode=124, stdout="", stderr="")
                 response = app.test_client().post(
@@ -291,7 +299,10 @@ class EmulatorRouteTests(unittest.TestCase):
             )
             media = Path(attached.split("=", 1)[1])
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
-            self.assertFalse(media.exists())
+            self.assertEqual(media, drive.path)
+            self.assertEqual(media.read_bytes()[:4], b"RDSK")
+            self.assertIn("--hard_drive_0_read_only=1", command)
+            self.assertFalse(drive.in_emulator)
 
     def test_hardware_profile_retains_only_bounded_managed_choices(self):
         temporary = tempfile.TemporaryDirectory()

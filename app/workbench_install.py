@@ -426,6 +426,9 @@ class WorkbenchInstallMixin:
         found = self.amigaos_release_on(disc)
         blocking: list[str] = []
         warnings: list[str] = []
+        notes: list[str] = []
+        boot_from = ""
+        needs_workbench = False
         if not found.get("recognised"):
             blocking.append(found.get("reason", "That disc is not an AmigaOS release CD."))
 
@@ -441,12 +444,26 @@ class WorkbenchInstallMixin:
         elif target.kind == "hdf" and target.partition is None:
             blocking.append("Choose a partition on this hard drive first.")
         else:
-            # Both releases update an existing system rather than creating
-            # one, and 3.9 refuses outright when it finds nothing to update.
-            if not volume_copy.entry_exists(self, target, STARTUP_SEQUENCE):
+            # The installer runs on the Amiga, so something has to start the
+            # machine. A drive with a system on it starts itself. An empty one
+            # is started from the system the disc carries, which is what the
+            # installer's own full installation onto an empty drive expects.
+            device = self.partition_label(target) or "this volume"
+            if volume_copy.entry_exists(self, target, STARTUP_SEQUENCE):
+                boot_from = "drive"
+            elif found.get("recognised") and found.get("emergencySystem"):
+                boot_from = "disc"
+                notes.append(
+                    f"{device} has no AmigaOS on it, so the machine will start from "
+                    "the emergency system the disc carries. In the installer, choose "
+                    f"the full installation and give it {device} to install onto."
+                )
+            else:
+                needs_workbench = True
                 blocking.append(
-                    "This volume has no S:Startup-Sequence, so there is no AmigaOS on it "
-                    "to update. Install Workbench 3.1 onto it first."
+                    f"{device} has no AmigaOS on it to start the machine from, and "
+                    "this disc carries no emergency system to start it from instead. "
+                    "Install Workbench 3.1 onto the drive first."
                 )
             free = summary.get("capacity", {}) if isinstance(summary.get("capacity"), dict) else {}
             needed = int(found.get("diskSpaceMb") or 0) * 1024 * 1024
@@ -457,28 +474,27 @@ class WorkbenchInstallMixin:
                     f"{found['diskSpaceMb']} MB and this volume has less free than that."
                 )
 
-        driver = self.cd_driver_state(target) if not blocking else {}
+        # The emulator mounts the disc as CD0: itself, so the machine sees it
+        # whether or not the drive has a CD driver of its own. What the drive
+        # has is reported, because the real machine will need one.
+        driver = self.cd_driver_state(target) if boot_from == "drive" and not blocking else {}
         if driver and not driver["active"]:
-            if driver["parked"] and driver["filesystem"]:
-                warnings.append(
-                    "The CD-ROM driver is parked in Storage/DOSDrivers, which is where "
-                    "Workbench keeps what is not yet wanted, so AmigaDOS cannot see a "
-                    "disc. It will be activated as CD0: before the machine starts."
-                )
-            else:
-                warnings.append(
-                    "This volume has no CD-ROM driver. The Workbench Extras disk supplies "
-                    "the filing system and the Storage disk supplies the CD0 mountlist, so "
-                    "install those before expecting the disc to appear."
-                )
+            warnings.append(
+                "This drive has no CD-ROM driver switched on. The emulator shows the "
+                "disc as CD0: regardless, so the installation is not affected, but "
+                "a real machine will need one to read a CD."
+            )
         return {
             "ready": not blocking,
             "disc": found,
             "machine": profile_machine(target),
             "processorReady": ready,
             "cdDriver": driver,
+            "bootFrom": boot_from if not blocking else "",
+            "needsWorkbench": needs_workbench,
             "blocking": blocking,
             "warnings": warnings,
+            "notes": notes,
         }
 
     def cd_driver_state(self, target: ImageSession) -> dict:

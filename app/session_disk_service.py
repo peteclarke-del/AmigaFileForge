@@ -337,6 +337,11 @@ class SessionDiskMixin:
                 unchanged = self.checkpoints.fingerprint(session) == token["fingerprint"]
             except OSError:
                 unchanged = False
+            # A request that hands the image to the emulator returns before
+            # the machine has written anything. Its undo point is the state
+            # the drive was in before the installer ran, so it is kept.
+            if session.in_emulator:
+                unchanged = False
             if unchanged:
                 try:
                     self.checkpoints.delete(session, token["checkpoint"]["id"])
@@ -359,6 +364,12 @@ class SessionDiskMixin:
             pass
 
     def restore_checkpoint(self, session: ImageSession, checkpoint_id: str) -> dict:
+        if session.in_emulator:
+            raise DiskError(
+                "This drive is attached to the running emulator, which is "
+                "writing to it. Close the emulator before going back to an "
+                "earlier state."
+            )
         with session.lock:
             try:
                 restored = self.checkpoints.restore(session, checkpoint_id)
