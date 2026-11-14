@@ -1,4 +1,4 @@
-FROM python:3.14-slim-trixie AS python-deps
+FROM python:3.15-slim-trixie AS python-deps
 
 # PyPI does not publish Capstone binaries for every Linux architecture. In
 # particular, 32-bit Raspberry Pi builds fall back to the source distribution,
@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY tools/build-hxc-runtime.sh /usr/local/bin/build-hxc-runtime
 RUN build-hxc-runtime /opt/hxc
 
-FROM python:3.14-slim-trixie
+FROM python:3.15-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
